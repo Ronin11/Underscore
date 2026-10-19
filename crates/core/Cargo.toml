@@ -1,0 +1,12 @@
+[package]
+name = "underscore-core"
+description = "The mixing engine: two streams in, one stream out, nothing written to disk."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+
+[lints]
+workspace = true

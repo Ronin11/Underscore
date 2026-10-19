@@ -1,0 +1,17 @@
+[package]
+name = "underscore"
+description = "Developer command line for the underscore player."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "underscore"
+path = "src/main.rs"
+
+[dependencies]
+underscore-core = { path = "../core" }
+
+[lints]
+workspace = true
