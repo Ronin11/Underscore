@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">underscore</string>
+    <string name="notification_channel">Playback</string>
+    <string name="notification_title">underscore is playing</string>
+</resources>

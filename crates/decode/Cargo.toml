@@ -1,0 +1,14 @@
+[package]
+name = "underscore-decode"
+description = "Audio files in, engine-format f32 frames out, via symphonia."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+underscore-core = { path = "../core" }
+symphonia = { version = "0.5", default-features = false, features = ["mp3", "aac", "isomp4", "flac", "ogg", "vorbis", "wav", "pcm"] }
+
+[lints]
+workspace = true

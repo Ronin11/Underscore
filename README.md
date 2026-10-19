@@ -44,9 +44,12 @@ These are not preferences. They are what keeps the product legal, and
 ## Layout
 
 ```
-crates/core   underscore-core: the engine. Pure f32 samples, no I/O, fully tested.
-crates/cli    underscore: developer command line; first playback milestone lands here.
-docs/         architecture.md (design), legal.md (why the rules are the rules)
+crates/core     underscore-core: the engine. Pure f32 samples, no I/O, fully tested.
+crates/decode   underscore-decode: files in (MP3, M4A/M4B, FLAC, Ogg, WAV), engine frames out.
+crates/android  underscore-android: the JNI bridge the Kotlin app calls.
+crates/cli      underscore: developer command line.
+android/        the Android app: a Kotlin shell over the engine.
+docs/           architecture.md (design), legal.md (why the rules are the rules)
 ```
 
 Everything is Rust. The engine is kept free of platform code so the same
@@ -63,10 +66,20 @@ cargo test --workspace
 All three must pass before a change lands. The toolchain is pinned in
 `rust-toolchain.toml`.
 
+## Try it on Android
+
+Every push to `main` that touches the code builds an arm64 APK in GitHub
+Actions and publishes it as a pre-release under
+[Releases](https://github.com/Ronin11/Underscore/releases). It is signed
+with a debug key, so Android asks you to allow installs from your browser.
+Pick a book or podcast file and a music file from your phone, press Play.
+
 ## Status
 
 The engine is in: N-layer mixing with chained ducking rules, crossfades,
 pitch-preserving speed, automatic levelling against speed and room noise,
-a music button, smart rewind, and sleep timers. See `docs/architecture.md`
-for the layout and what comes next. No decoding or device output yet, so
-nothing plays out loud until milestone one lands in `crates/cli`.
+a music button, smart rewind, and sleep timers. Decoding covers the common
+formats. The Android app is a plain try-it shell: file pickers, transport,
+speed, music button and level, sleep timers, a foreground service so it
+keeps playing with the screen off. See `docs/architecture.md` for what is
+next: self-hosted sources, chapters, lock-screen controls, a real UI.

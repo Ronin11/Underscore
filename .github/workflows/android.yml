@@ -1,0 +1,87 @@
+name: Android APK
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "crates/**"
+      - "android/**"
+      - "Cargo.*"
+      - "rust-toolchain.toml"
+      - ".github/workflows/android.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: android-apk
+  cancel-in-progress: true
+
+jobs:
+  apk:
+    name: Build and publish APK
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.98.1
+          targets: aarch64-linux-android
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install cargo-ndk
+        run: cargo install cargo-ndk --locked
+
+      - name: Build the Rust library for arm64
+        env:
+          ANDROID_NDK_HOME: ${{ env.ANDROID_NDK_LATEST_HOME }}
+        run: |
+          cargo ndk --target arm64-v8a --platform 26 \
+            --output-dir android/app/src/main/jniLibs \
+            build --release -p underscore-android
+          ls -l android/app/src/main/jniLibs/arm64-v8a
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Build the APK
+        working-directory: android
+        run: ./gradlew --no-daemon assembleRelease
+
+      - name: Name the APK
+        id: apk
+        run: |
+          short=$(git rev-parse --short HEAD)
+          name="underscore-${{ github.run_number }}-${short}.apk"
+          cp android/app/build/outputs/apk/release/app-release.apk "$name"
+          echo "name=$name" >> "$GITHUB_OUTPUT"
+          echo "short=$short" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.apk.outputs.name }}
+          path: ${{ steps.apk.outputs.name }}
+
+      - name: Publish as a pre-release
+        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: apk-${{ github.run_number }}
+          name: APK build ${{ github.run_number }}
+          prerelease: true
+          files: ${{ steps.apk.outputs.name }}
+          body: |
+            Try-it build of the underscore Android app from `${{ steps.apk.outputs.short }}`.
+            arm64 only, signed with a debug key: Android will ask you to allow
+            installs from your browser or file manager.
+
+            Pick a book or podcast file and a music file from your phone, press Play.
+            Speed keeps pitch. The music ducks under speech and holds through pauses.
+            The music button fades the background out and resumes it in place.

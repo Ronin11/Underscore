@@ -1,0 +1,19 @@
+[package]
+name = "underscore-android"
+description = "JNI bridge between the Kotlin shell and the engine."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+name = "underscore_android"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+underscore-core = { path = "../core" }
+underscore-decode = { path = "../decode" }
+jni = "0.21"
+
+[lints]
+workspace = true
