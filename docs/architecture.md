@@ -101,9 +101,27 @@ stream, since that is what the listener is "listening to".
    progress sync back to the server.
 4. **Smarter layering.** VAD, music analysis, chapter-aware transitions,
    gap filling.
-5. **Mobile shells.** Android and iOS over the same core, with background
-   audio and media controls. This is where the product lives for most
-   listeners; the desktop milestones exist to get the engine right first.
+5. **Linux desktop app, packaged and hosted.** A desktop shell over the
+   engine, built in CI and published as downloadable packages: a Flatpak
+   for the broadest reach, plus an AppImage and a `.deb` for people who
+   avoid Flatpak. Releases are hosted as GitHub Releases on this
+   repository, with a Flathub submission once the app is stable.
+6. **Android app.** The Rust core compiled for Android with `cargo-ndk`,
+   a thin Kotlin shell for the audio session, background playback,
+   notification and lock-screen controls, and the microphone level feed for
+   noise compensation. Distributed as a signed APK on GitHub Releases
+   first, then F-Droid, then Play if it earns it. iOS can follow the same
+   pattern later; it is not a target yet.
+
+Desktop milestones exist to get the engine right first. The Android app is
+where the product lives for most listeners.
+
+## Release and hosting
+
+Both shells ship from this repository's CI. A tagged commit builds every
+package, runs the full test suite against the exact artifacts, and attaches
+them to a GitHub Release. No package is hand-built. Package manifests and
+signing live in `deploy/` when they arrive.
 
 ## Why Rust everywhere
 
