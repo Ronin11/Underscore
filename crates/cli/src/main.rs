@@ -6,7 +6,7 @@
 
 use std::process::ExitCode;
 
-use underscore_core::DuckConfig;
+use underscore_core::PlayerConfig;
 
 fn main() -> ExitCode {
     let mut args = std::env::args().skip(1);
@@ -20,7 +20,7 @@ fn main() -> ExitCode {
             ExitCode::SUCCESS
         }
         Some("defaults") => {
-            println!("{:#?}", DuckConfig::default());
+            println!("{:#?}", PlayerConfig::default());
             ExitCode::SUCCESS
         }
         Some(other) => {
@@ -38,7 +38,7 @@ fn print_help() {
          Usage: underscore <command>\n\
          \n\
          Commands:\n\
-         \x20 defaults   Print the default ducking parameters\n\
+         \x20 defaults   Print every tunable's default value\n\
          \x20 --version  Print the version\n\
          \x20 --help     Print this help\n\
          \n\

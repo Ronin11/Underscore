@@ -65,5 +65,8 @@ All three must pass before a change lands. The toolchain is pinned in
 
 ## Status
 
-Initial commit: workspace, ducking engine with tests, placeholder CLI. See
-`docs/architecture.md` for the milestones.
+The engine is in: N-layer mixing with chained ducking rules, crossfades,
+pitch-preserving speed, automatic levelling against speed and room noise,
+a music button, smart rewind, and sleep timers. See `docs/architecture.md`
+for the layout and what comes next. No decoding or device output yet, so
+nothing plays out loud until milestone one lands in `crates/cli`.

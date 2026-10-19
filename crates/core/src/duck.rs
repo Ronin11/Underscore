@@ -8,6 +8,7 @@
 
 /// Tunable parameters. Gains are linear (1.0 is unity), times are seconds.
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct DuckConfig {
     /// Foreground peak level above which ducking engages.
     pub threshold: f32,

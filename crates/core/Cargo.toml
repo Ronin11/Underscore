@@ -1,12 +1,18 @@
 [package]
 name = "underscore-core"
-description = "The mixing engine: two streams in, one stream out, nothing written to disk."
+description = "The mixing engine: layers in, one stream out, nothing written to disk."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
 
+[features]
+default = []
+## Derive `Serialize`/`Deserialize` on every config type, for saving tuning.
+serde = ["dep:serde"]
+
 [dependencies]
+serde = { version = "1", features = ["derive"], optional = true }
 
 [lints]
 workspace = true
