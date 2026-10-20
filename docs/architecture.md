@@ -85,10 +85,10 @@ is no render-to-file path, and none will be added.
 
 ### Output
 
-Desktop uses `cpal`. Mobile uses the platform audio session through a thin
-shell (UniFFI bindings over the core crate), configured for background
-playback with the lock screen and headset controls wired to the foreground
-stream, since that is what the listener is "listening to".
+Android uses an `AudioTrack` owned by a foreground service, fed by a render
+thread that calls the engine over JNI; see `docs/android.md`. Lock-screen
+and headset controls are routed to the speech stream, since that is what
+the listener is "listening to". Desktop will use `cpal` when it arrives.
 
 ## Where things stand
 
