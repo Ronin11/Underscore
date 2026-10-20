@@ -297,17 +297,17 @@ class MainActivity : AppCompatActivity() {
                     scrubbing = false
                     val s = service ?: return
                     val dur = s.engine.durationMs
-                    if (dur > 0) s.engine.seekMs(dur * sb.progress / 1000)
+                    if (dur > 0) s.seekMs(dur * sb.progress / 1000)
                 }
             })
         }
         root.addView(progress)
 
-        playButton = button("Play") { service?.let { it.engine.toggle(it.now()) } }
+        playButton = button("Play") { service?.toggle() }
         row(
-            button("−15 s") { service?.engine?.skipBack() },
+            button("−15 s") { service?.skipBack() },
             playButton,
-            button("+30 s") { service?.engine?.skipForward() },
+            button("+30 s") { service?.skipForward() },
         )
 
         speedLabel = TextView(this).apply { gravity = Gravity.CENTER; textSize = 18f }

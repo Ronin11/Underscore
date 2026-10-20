@@ -9,7 +9,8 @@ A Kotlin shell over the Rust engine. Three files:
   `AudioTrack` (48 kHz, stereo, float). A render thread asks the engine for
   1024-frame blocks and writes them straight to the track. Files are opened
   read-only through the content resolver and the descriptor is detached and
-  handed to Rust, which owns it from then on.
+  handed to Rust, which owns it from then on. It also owns the media
+  session, audio focus, and the notification; transport goes through it.
 - `MainActivity.kt` binds to the service and builds its controls in code:
   file pickers, scrub bar, transport, speed, chapters, map, music button
   and level, sleep timers. No layout XML, so nothing to keep in sync.
@@ -39,6 +40,23 @@ until the next cue replaces it.
 
 Folders on the Downloads provider or a cloud provider have no path and
 cannot be scanned; pick one on the device or an SD card.
+
+## Lock screen, headset, and other apps
+
+The service holds a `MediaSessionCompat` and a media-style notification
+with back, play/pause, and forward. The session carries the book's name
+and the current chapter, with position and speed, so the lock screen
+and a watch show the book and a scrub bar. Headset buttons arrive
+through the session callback. Nothing is shown for the music: the
+listener is listening to the book.
+
+Play requests audio focus and does nothing if it is refused. Another
+app taking focus pauses the book; a transient loss (a call, a
+navigation prompt) pauses and resumes afterwards. Spoken word is never
+ducked under another app's audio, only paused. Unplugging headphones
+pauses. The service polls the engine once a second for changes it made
+on its own, such as a sleep timer running out, and republishes the
+state only when something the lock screen shows has moved.
 
 ## Install the pre-built APK
 
@@ -75,15 +93,13 @@ or a URI the app has no read grant for.
 
 ## What to add next, in rough order
 
-1. Lock-screen and headset controls (`MediaSession`), with the notification
-   showing position and play/pause.
-2. Remember the last book, music folder, map, and position across
+1. Remember the last book, music folder, map, and position across
    launches, with a persisted URI grant for the map.
-3. Keep the music folder's index between map loads instead of rescanning.
-4. Microphone level for noise compensation (`RECORD_AUDIO`, a short RMS
+2. Keep the music folder's index between map loads instead of rescanning.
+3. Microphone level for noise compensation (`RECORD_AUDIO`, a short RMS
    window on a low-priority thread, `Engine.setNoiseDb`).
-5. A music queue: a folder or playlist, crossfaded track to track.
-6. A real UI.
+4. A music queue: a folder or playlist, crossfaded track to track.
+5. A real UI.
 
 Chapters are in: the bridge reads M4B chapter marks when a book loads,
 the activity shows the current chapter and lists them in a dialog that

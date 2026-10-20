@@ -30,8 +30,8 @@ crates/android   Bridge (plain Rust over Player), follow.rs (the map worker
                  thread), and jni.rs (JNI exports).
 crates/cli       `underscore` binary. `scan` and `map check`; no playback yet.
 android/         Gradle project. Engine.kt (JNI wrapper), PlaybackService.kt
-                 (foreground service, AudioTrack render thread), MainActivity.kt
-                 (UI built in code, no layout XML).
+                 (foreground service, AudioTrack render thread, media session,
+                 audio focus), MainActivity.kt (UI built in code, no layout XML).
 .github/         ci.yml (fmt, clippy, test) and android.yml (APK pre-release).
 ```
 

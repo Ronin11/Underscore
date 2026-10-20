@@ -126,8 +126,8 @@ and the plan for the tool that writes maps.
 
 Android uses an `AudioTrack` owned by a foreground service, fed by a render
 thread that calls the engine over JNI; see `docs/android.md`. Lock-screen
-and headset controls are routed to the speech stream, since that is what
-the listener is "listening to". Desktop will use `cpal` when it arrives.
+and headset controls drive the speech stream, since that is what the
+listener is "listening to". Desktop will use `cpal` when it arrives.
 
 ## Where things stand
 
@@ -151,7 +151,9 @@ Done:
   bridge asks the conductor on every block, and a worker thread opens
   each track off the audio thread and crossfades it in.
 - An Android try-it app over a JNI bridge, published from CI as an arm64
-  pre-release on every code push.
+  pre-release on every code push. Lock-screen, notification, and headset
+  controls through a media session; audio focus; pause when headphones
+  come out.
 
 Not done:
 
@@ -159,7 +161,7 @@ Not done:
 - No podcast feeds, no self-hosted sources, no persistence.
 - The CLI does not play maps; only the Android app does. No server
   backends. No tool writes maps.
-- No lock-screen controls, no microphone feed, no real UI.
+- No microphone feed, no persistence, no real UI.
 - The resampler is linear interpolation. Fine for speech; music under
   speech loses a little top end at 44.1 kHz. Replace with `rubato` when
   quality starts to matter.
@@ -171,9 +173,9 @@ The order has changed since the first draft: the Android shell came before
 desktop playback because that is where listening happens.
 
 1. **Android try-it build.** Done. See `docs/android.md`.
-2. **Android, usable daily.** Chapters are in. Next: lock-screen
-   controls, remembered position and files, microphone noise feed, a music
-   queue. Then a UI.
+2. **Android, usable daily.** Chapters, maps, and lock-screen controls
+   are in. Next: remembered position and files, microphone noise feed, a
+   music queue. Then a UI.
 3. **Library layer and map playback.** The trait, local folders, the
    cache, the conductor, M4B chapters, and the Android app following a
    map are in. Next: Audiobookshelf, OpenSubsonic, and Jellyfin behind
