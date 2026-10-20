@@ -1,5 +1,9 @@
 /target
+# Keep real audio out of the repo. Test fixtures are small synthetic
+# files and are the one exception.
 *.wav
 *.mp3
 *.m4b
 *.flac
+!crates/*/tests/fixtures/*.m4b
+!crates/*/tests/fixtures/*.wav
