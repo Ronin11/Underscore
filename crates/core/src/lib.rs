@@ -35,6 +35,7 @@ pub mod engine;
 pub mod fade;
 pub mod layer;
 pub mod player;
+pub mod region;
 pub mod source;
 pub mod stretch;
 pub mod transport;
@@ -45,6 +46,7 @@ pub use engine::{DuckRule, DuckTarget, Engine, EngineConfig, LayerId, LayerMeter
 pub use fade::{Crossfade, Curve, Fader};
 pub use layer::{Layer, LayerConfig, LayerKind};
 pub use player::{Player, PlayerConfig};
+pub use region::{Region, RegionConfig};
 pub use source::{Silence, SliceSource, Source};
 pub use stretch::{SpeedControl, StretchConfig, TimeStretch};
 pub use transport::{Action, RewindPolicy, SleepTimer, Transport, TransportConfig, TransportState};

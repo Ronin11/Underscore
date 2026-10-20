@@ -9,6 +9,8 @@ every platform shell.
 ```
 sources     local files · podcast RSS · Audiobookshelf API · OpenSubsonic API
    │
+map         crates/map: which music under which stretch of the book, as data
+   │
 decode      symphonia (MP3, AAC, FLAC, Opus, M4B chapters) → f32 PCM, resampled
    │
 engine      crates/core: ducking, mixing, later energy matching and transitions
@@ -74,6 +76,9 @@ Player
 - `player`: the facade a shell drives. Owns all of the above, wires the
   default speech-ducks-everything rule, and offers the music button, which
   fades every non-speech layer out and pauses it in place.
+- `region`: a `Source` that plays a window of another source and can
+  repeat it with a crossfade at the seam, so a short passage can sit under
+  a long chapter. The head of the window is read once at open.
 
 Planned: voice activity detection in place of the peak follower for noisy
 narration; music energy and tempo analysis so the background can be chosen
@@ -82,6 +87,16 @@ master.
 
 The engine never produces anything that outlives the output buffer. There
 is no render-to-file path, and none will be added.
+
+### Music maps (`crates/map`)
+
+A map says what music plays under which stretch of a book: cues anchored
+to chapter and offset, each naming a track by its tags or a mood, a region
+of it, and levels and fades. The crate parses and validates maps and
+resolves them against a recording's chapter times into a `Schedule` that
+reports when the current cue changes. It is data only; finding tracks and
+feeding the player is the shell's job. `docs/music-map.md` has the format
+and the plan for the tool that writes maps.
 
 ### Output
 
@@ -98,6 +113,9 @@ Done:
   WSOLA speed, auto-level, transport with smart rewind and sleep timers.
 - Decoding: MP3, AAC in M4A and M4B, FLAC, Ogg Vorbis, WAV. Linear
   resampling and channel mapping. Exact seeks.
+- The music map format, its parser, the schedule that resolves it against
+  chapter times, and the engine's region source for partial and repeated
+  tracks. All tested.
 - An Android try-it app over a JNI bridge, published from CI as an arm64
   pre-release on every code push.
 
@@ -105,6 +123,8 @@ Not done:
 
 - The desktop CLI does nothing yet; `cpal` output is not wired.
 - No chapters, no podcast feeds, no self-hosted sources, no persistence.
+- No map playback: nothing yet looks a cue's track up and hands the region
+  to the player. No tool writes maps.
 - No lock-screen controls, no microphone feed, no real UI.
 - The resampler is linear interpolation. Fine for speech; music under
   speech loses a little top end at 44.1 kHz. Replace with `rubato` when
@@ -119,17 +139,22 @@ desktop playback because that is where listening happens.
 1. **Android try-it build.** Done. See `docs/android.md`.
 2. **Android, usable daily.** Lock-screen controls, remembered position and
    files, M4B chapters, microphone noise feed, a music queue. Then a UI.
-3. **Local desktop playback.** `underscore play <book> <music>` via `cpal`.
+3. **Library layer and map playback.** One `Library` trait over local
+   files, Audiobookshelf, OpenSubsonic, and Jellyfin, with search by tags.
+   Fetch to cache first, stream later. Then the glue that plays a map:
+   cue changes become region sources crossfaded into the music layer.
+4. **Local desktop playback.** `underscore play <book> <music>` via `cpal`.
    Mostly a developer tool for tuning the engine with real material.
-4. **Podcast RSS.** Subscriptions, episode download, episodes as transition
+5. **Map authoring.** `underscore map`: transcript in, map out, with the
+   language model kept to scene segments and candidate picks. See
+   `docs/music-map.md`.
+6. **Podcast RSS.** Subscriptions, episode download, episodes as transition
    events.
-5. **Self-hosted sources.** Audiobookshelf and OpenSubsonic clients with
-   progress sync back to the server.
-6. **Smarter layering.** VAD, music energy analysis, chapter-aware
+7. **Smarter layering.** VAD, music energy analysis, chapter-aware
    transitions, gap filling, a master limiter, a better resampler.
-7. **Linux desktop app, packaged and hosted.** Flatpak, AppImage and `.deb`
+8. **Linux desktop app, packaged and hosted.** Flatpak, AppImage and `.deb`
    on GitHub Releases, Flathub once stable.
-8. **Android, released.** A release signing key, F-Droid, then Play if it
+9. **Android, released.** A release signing key, F-Droid, then Play if it
    earns it. iOS can follow the same shape later; it is not a target yet.
 
 ## Release and hosting

@@ -10,7 +10,8 @@ change. In particular:
 
 `docs/legal.md` explains why. `docs/architecture.md` has the layout, where
 things stand, and what is next. `docs/android.md` covers building and
-installing the app.
+installing the app. `docs/music-map.md` is the map format: what plays under
+which stretch of a book, as data, never as audio.
 
 ## Map
 
@@ -18,6 +19,8 @@ installing the app.
 crates/core      the engine: layers, ducking, fades, time-stretch, auto-level,
                  transport, Player facade. Pure f32, no I/O, no platform code.
 crates/decode    FileSource: symphonia decoding, resampling, channel mapping.
+crates/map       Music maps: the TOML format, validation, and the schedule that
+                 resolves cues against chapter times. Data only, no I/O.
 crates/android   Bridge (plain Rust over Player) and jni.rs (JNI exports).
 crates/cli       `underscore` binary. Placeholder; no playback yet.
 android/         Gradle project. Engine.kt (JNI wrapper), PlaybackService.kt
