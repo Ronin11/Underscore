@@ -47,6 +47,6 @@ pub use fade::{Crossfade, Curve, Fader};
 pub use layer::{Layer, LayerConfig, LayerKind};
 pub use player::{Player, PlayerConfig};
 pub use region::{Region, RegionConfig};
-pub use source::{Silence, SliceSource, Source};
+pub use source::{Gain, Silence, SliceSource, Source};
 pub use stretch::{SpeedControl, StretchConfig, TimeStretch};
 pub use transport::{Action, RewindPolicy, SleepTimer, Transport, TransportConfig, TransportState};

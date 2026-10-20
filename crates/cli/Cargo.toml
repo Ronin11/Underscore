@@ -12,6 +12,9 @@ path = "src/main.rs"
 
 [dependencies]
 underscore-core = { path = "../core" }
+underscore-decode = { path = "../decode" }
+underscore-library = { path = "../library" }
+underscore-map = { path = "../map" }
 
 [lints]
 workspace = true

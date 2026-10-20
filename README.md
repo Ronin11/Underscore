@@ -47,8 +47,10 @@ These are not preferences. They are what keeps the product legal, and
 crates/core     underscore-core: the engine. Pure f32 samples, no I/O, fully tested.
 crates/decode   underscore-decode: files in (MP3, M4A/M4B, FLAC, Ogg, WAV), engine frames out.
 crates/map      underscore-map: music maps, which music under which chapter. Data only.
+crates/library  underscore-library: the Library trait, local folders, the per-stream
+                cache, and the conductor that plays a map.
 crates/android  underscore-android: the JNI bridge the Kotlin app calls.
-crates/cli      underscore: developer command line.
+crates/cli      underscore: developer command line. Scans folders, checks maps.
 android/        the Android app: a Kotlin shell over the engine.
 docs/           architecture.md (design), legal.md (why the rules are the rules),
                 music-map.md (the map format and the tool that will write it)

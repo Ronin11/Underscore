@@ -21,8 +21,11 @@ crates/core      the engine: layers, ducking, fades, time-stretch, auto-level,
 crates/decode    FileSource: symphonia decoding, resampling, channel mapping.
 crates/map       Music maps: the TOML format, validation, and the schedule that
                  resolves cues against chapter times. Data only, no I/O.
+crates/library   The Library trait (list, search, fetch, progress), LocalLibrary
+                 over folders, the per-stream Cache, and the Conductor that turns
+                 a map plus the book position into player directions.
 crates/android   Bridge (plain Rust over Player) and jni.rs (JNI exports).
-crates/cli       `underscore` binary. Placeholder; no playback yet.
+crates/cli       `underscore` binary. `scan` and `map check`; no playback yet.
 android/         Gradle project. Engine.kt (JNI wrapper), PlaybackService.kt
                  (foreground service, AudioTrack render thread), MainActivity.kt
                  (UI built in code, no layout XML).
@@ -42,6 +45,11 @@ android/         Gradle project. Engine.kt (JNI wrapper), PlaybackService.kt
   compiles fine and crashes at first call. Change both or neither.
 - Audio reaches the device through `PlaybackService`'s render thread only.
   Do not add a second path, a recorder, or a file writer.
+- `Cache` in `crates/library` stores single items fetched from a library,
+  byte for byte. Never give it, or anything else, a way to take samples
+  from the engine.
+- `Conductor::update` is cheap and may run anywhere. `conductor::open`
+  does I/O and must not run on the audio thread or under the bridge lock.
 
 ## Checks before any commit
 

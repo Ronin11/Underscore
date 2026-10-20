@@ -90,7 +90,7 @@ checked when the map is resolved, since it depends on the chapter times.
 
 ## How it plays
 
-Three pieces, two of them done:
+Three pieces, all in:
 
 - **`Region`** in `crates/core`. A `Source` that plays a window of another
   source and can repeat it with a crossfade at the seam. The head of the
@@ -101,11 +101,19 @@ Three pieces, two of them done:
   of chapter start times and answers one question each tick: did the
   current cue change? Seeks are just a bigger step; nothing is assumed
   about direction. Done.
-- **The glue**, in the shell. On `Enter(n)`: look the cue's track up in
-  the library, decode it, wrap it in a `Region` from
-  `Map::region_config`, and `crossfade_layer` it in over the cue's fade
-  in, at `level_gain`. On `Leave`: fade the music layer out. Not done.
-  This needs the library layer, which is where the next work goes.
+- **`Conductor`** in `crates/library`. Resolves every cue against the
+  music library once, named track first and vibe tags as the fallback,
+  then turns each position update into at most one `Direction`: play this
+  region of this item at this gain with this fade, or fade to silence.
+  Silence is asked for once, not again for every silent stretch. `open`
+  fetches and decodes the item and wraps it in a `Region` and a `Gain`;
+  `apply` is one crossfade on the music layer. A shell runs `open` off
+  the audio thread. Done. What is not done is a shell that calls it: the
+  Android app does not load maps yet.
+
+`underscore map check <map> --music <folder>` resolves a map against a
+folder and prints how each cue landed, which is the quickest way to see
+whether a map and a library agree.
 
 Chapter times come from the book itself (M4B chapters) or from the server
 (Audiobookshelf's chapter list). A map with chapter positions cannot be

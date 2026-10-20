@@ -177,6 +177,65 @@ impl Source for SliceSource {
     }
 }
 
+/// A source scaled by a fixed gain. For level offsets that belong to the
+/// material rather than to the listener's level control.
+pub struct Gain {
+    inner: Box<dyn Source>,
+    gain: f32,
+}
+
+impl Gain {
+    /// Scale `inner` by `gain`, a linear factor.
+    #[must_use]
+    pub fn new(inner: Box<dyn Source>, gain: f32) -> Self {
+        Self {
+            inner,
+            gain: gain.max(0.0),
+        }
+    }
+
+    /// The factor applied.
+    #[must_use]
+    pub fn gain(&self) -> f32 {
+        self.gain
+    }
+}
+
+impl std::fmt::Debug for Gain {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Gain")
+            .field("gain", &self.gain)
+            .finish_non_exhaustive()
+    }
+}
+
+impl Source for Gain {
+    fn read(&mut self, out: &mut [f32]) -> usize {
+        let got = self.inner.read(out);
+        if (self.gain - 1.0).abs() > f32::EPSILON {
+            for s in &mut out[..got * self.inner.channels()] {
+                *s *= self.gain;
+            }
+        }
+        got
+    }
+    fn channels(&self) -> usize {
+        self.inner.channels()
+    }
+    fn sample_rate(&self) -> u32 {
+        self.inner.sample_rate()
+    }
+    fn seek(&mut self, to: Duration) -> bool {
+        self.inner.seek(to)
+    }
+    fn position(&self) -> Option<Duration> {
+        self.inner.position()
+    }
+    fn duration(&self) -> Option<Duration> {
+        self.inner.duration()
+    }
+}
+
 #[cfg(test)]
 #[allow(clippy::float_cmp)]
 mod tests {
@@ -200,6 +259,19 @@ mod tests {
         assert_eq!(s.remaining_frames(), 70);
         assert_eq!(s.position(), Some(Duration::from_secs(3)));
         assert_eq!(s.duration(), Some(Duration::from_secs(10)));
+    }
+
+    #[test]
+    fn gain_scales_and_passes_everything_else_through() {
+        let inner = Box::new(SliceSource::new(vec![1.0, -1.0, 0.5, 0.0], 2, 10));
+        let mut g = Gain::new(inner, 0.5);
+        assert_eq!(g.duration(), Some(Duration::from_millis(200)));
+        let mut out = [0.0; 4];
+        assert_eq!(g.read(&mut out), 2);
+        assert_eq!(out, [0.5, -0.5, 0.25, 0.0]);
+        assert!(g.seek(Duration::ZERO));
+        assert_eq!(g.read(&mut out[..2]), 1);
+        assert_eq!(&out[..2], &[0.5, -0.5]);
     }
 
     #[test]

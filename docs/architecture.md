@@ -7,7 +7,9 @@ every platform shell.
 ## Layers
 
 ```
-sources     local files · podcast RSS · Audiobookshelf API · OpenSubsonic API
+sources     crates/library: one Library trait over local folders now, and
+            Audiobookshelf, OpenSubsonic, Jellyfin next; a per-stream cache;
+            the conductor that follows a music map
    │
 map         crates/map: which music under which stretch of the book, as data
    │
@@ -20,13 +22,34 @@ output      cpal on desktop · platform audio shells on mobile
 shells      CLI now · mobile and desktop UI later, over the same engine
 ```
 
-### Sources
+### Sources (`crates/library`)
 
-Each source yields a stream of decoded samples plus metadata: chapters for
-books, episodes for podcasts, tempo and loudness for music once analysis
-exists. Local files are the reference implementation. Audiobookshelf and
-OpenSubsonic are HTTP clients that stream the user's own media from the
-user's own server; they are the only network code in the product.
+One `Library` trait: list items of a role, look one up, search by tags,
+`fetch` an item as a local file, and read or report progress. Every
+backend answers the same questions, so the player never knows which one
+it is talking to. An item carries a role, speech or music, so a server
+that holds both (Jellyfin) and servers that hold one (Audiobookshelf,
+Navidrome) fit the same shape.
+
+`LocalLibrary` is the reference backend: one folder per role, a scan that
+probes every file for tags, length, and chapter marks, with the file name
+and folder layout as the fallback when tags are missing. Progress lives in
+a JSON file.
+
+Server backends will fetch an item into the `Cache` first and play it from
+there, exactly as a local file. That reuses the whole local path and keeps
+network code out of the audio thread. Streaming over HTTP range requests
+can replace the download later, behind the same `fetch`, when first-play
+latency on a large book matters. The cache holds single items of the
+listener's own library and has no API that takes audio from the engine.
+
+The conductor is the glue between a music map and the player. It resolves
+every cue's track against the music library once (named track first, vibe
+tags as the fallback, silence when nothing matches), then turns each
+position update into at most one direction: crossfade to this region of
+this item at this gain, or fade to silence. Opening the item is a separate,
+slow call a shell runs off the audio thread; applying the result is one
+crossfade on the music layer.
 
 ### Decode
 
@@ -116,6 +139,9 @@ Done:
 - The music map format, its parser, the schedule that resolves it against
   chapter times, and the engine's region source for partial and repeated
   tracks. All tested.
+- The library layer: the `Library` trait, local folders with tag probing,
+  the per-stream cache, and the conductor that follows a map. The CLI's
+  `map check` resolves a map against a music folder end to end.
 - An Android try-it app over a JNI bridge, published from CI as an arm64
   pre-release on every code push.
 
@@ -123,8 +149,10 @@ Not done:
 
 - The desktop CLI does nothing yet; `cpal` output is not wired.
 - No chapters, no podcast feeds, no self-hosted sources, no persistence.
-- No map playback: nothing yet looks a cue's track up and hands the region
-  to the player. No tool writes maps.
+- No shell drives the conductor yet: the Android app and the CLI do not
+  load maps into a running player. No server backends. No tool writes
+  maps. M4B chapter atoms are not parsed, so local books have no chapter
+  marks until that lands.
 - No lock-screen controls, no microphone feed, no real UI.
 - The resampler is linear interpolation. Fine for speech; music under
   speech loses a little top end at 44.1 kHz. Replace with `rubato` when
@@ -139,10 +167,10 @@ desktop playback because that is where listening happens.
 1. **Android try-it build.** Done. See `docs/android.md`.
 2. **Android, usable daily.** Lock-screen controls, remembered position and
    files, M4B chapters, microphone noise feed, a music queue. Then a UI.
-3. **Library layer and map playback.** One `Library` trait over local
-   files, Audiobookshelf, OpenSubsonic, and Jellyfin, with search by tags.
-   Fetch to cache first, stream later. Then the glue that plays a map:
-   cue changes become region sources crossfaded into the music layer.
+3. **Library layer and map playback.** The trait, local folders, the
+   cache, and the conductor are in. Next: M4B chapters, the Android app
+   loading a map and driving the conductor from a worker thread, then
+   Audiobookshelf, OpenSubsonic, and Jellyfin behind the same trait.
 4. **Local desktop playback.** `underscore play <book> <music>` via `cpal`.
    Mostly a developer tool for tuning the engine with real material.
 5. **Map authoring.** `underscore map`: transcript in, map out, with the

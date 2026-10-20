@@ -18,6 +18,9 @@ use symphonia::core::audio::SampleBuffer;
 use symphonia::core::codecs::{CODEC_TYPE_NULL, Decoder, DecoderOptions};
 use symphonia::core::errors::Error as SymError;
 use symphonia::core::formats::{FormatOptions, FormatReader, SeekMode, SeekTo};
+pub mod probe;
+
+pub use probe::{Chapter, Probe, Tags, probe, probe_path};
 pub use symphonia::core::io::MediaSource;
 use symphonia::core::io::{MediaSourceStream, MediaSourceStreamOptions};
 use symphonia::core::meta::MetadataOptions;
@@ -161,16 +164,7 @@ impl FileSource {
         let src_channels = params
             .channels
             .map_or(0, symphonia::core::audio::Channels::count);
-        let duration = match (params.n_frames, params.time_base) {
-            (Some(n), Some(tb)) => {
-                let t = tb.calc_time(n);
-                Some(Duration::from_secs_f64(f64::from_u64(t.seconds) + t.frac))
-            }
-            (Some(n), None) => Some(Duration::from_secs_f64(
-                f64::from_u64(n) / f64::from(src_rate),
-            )),
-            _ => None,
-        };
+        let duration = track_duration(params);
         let decoder = symphonia::default::get_codecs().make(params, &DecoderOptions::default())?;
         Ok(Self {
             track_id: track.id,
@@ -296,6 +290,22 @@ impl FileSource {
 /// Channel-map one source frame into `out.len()` samples: mono is copied
 /// to every channel, many-to-one averages, otherwise channels line up and
 /// extras are dropped or zero-filled.
+/// Length of a track from its codec parameters, when they say.
+pub(crate) fn track_duration(
+    params: &symphonia::core::codecs::CodecParameters,
+) -> Option<Duration> {
+    match (params.n_frames, params.time_base, params.sample_rate) {
+        (Some(n), Some(tb), _) => {
+            let t = tb.calc_time(n);
+            Some(Duration::from_secs_f64(f64::from_u64(t.seconds) + t.frac))
+        }
+        (Some(n), None, Some(rate)) => {
+            Some(Duration::from_secs_f64(f64::from_u64(n) / f64::from(rate)))
+        }
+        _ => None,
+    }
+}
+
 fn map_channels(frame: &[f32], out: &mut [f32]) {
     match (frame.len(), out.len()) {
         (0, _) => out.fill(0.0),
