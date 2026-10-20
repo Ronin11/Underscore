@@ -45,6 +45,19 @@ class Engine(sampleRate: Int, val channels: Int) : AutoCloseable {
     fun setSleepEndOfChapter(nowMs: Long) = nativeSetSleepEndOfChapter(h(), nowMs)
     val sleepAtChapterEnd: Boolean get() = nativeSleepAtChapterEnd(h())
 
+    /**
+     * Follow a music map, playing from [musicDir]. Scans the folder, so it
+     * is slow: call it from a background thread. Returns null when the map
+     * is loaded, otherwise what was wrong.
+     */
+    fun loadMap(toml: String, musicDir: String, cacheDir: String): String? =
+        nativeLoadMap(h(), toml, musicDir, cacheDir)
+    /** Stop following the map and fade its music out. */
+    fun clearMap() = nativeClearMap(h())
+    val hasMap: Boolean get() = nativeHasMap(h())
+    /** One line on the map for the UI. */
+    val mapStatus: String get() = nativeMapStatus(h())
+
     /** Fill [out] with interleaved samples; returns frames written. */
     fun render(out: FloatArray, nowMs: Long): Int = nativeRender(h(), out, nowMs)
 
@@ -84,6 +97,10 @@ class Engine(sampleRate: Int, val channels: Int) : AutoCloseable {
     private external fun nativeSeekChapter(handle: Long, index: Int): Boolean
     private external fun nativeSetSleepEndOfChapter(handle: Long, nowMs: Long)
     private external fun nativeSleepAtChapterEnd(handle: Long): Boolean
+    private external fun nativeLoadMap(handle: Long, toml: String, musicDir: String, cacheDir: String): String?
+    private external fun nativeClearMap(handle: Long)
+    private external fun nativeHasMap(handle: Long): Boolean
+    private external fun nativeMapStatus(handle: Long): String
     private external fun nativeRender(handle: Long, out: FloatArray, nowMs: Long): Int
 
     companion object {

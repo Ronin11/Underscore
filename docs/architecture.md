@@ -49,7 +49,8 @@ tags as the fallback, silence when nothing matches), then turns each
 position update into at most one direction: crossfade to this region of
 this item at this gain, or fade to silence. Opening the item is a separate,
 slow call a shell runs off the audio thread; applying the result is one
-crossfade on the music layer.
+crossfade on the music layer. On Android that shell is the bridge's
+`follow` module: a worker thread woken by the render thread.
 
 ### Decode
 
@@ -146,6 +147,9 @@ Done:
 - The library layer: the `Library` trait, local folders with tag probing,
   the per-stream cache, and the conductor that follows a map. The CLI's
   `map check` resolves a map against a music folder end to end.
+- Map playback on Android: the app loads a map and a music folder, the
+  bridge asks the conductor on every block, and a worker thread opens
+  each track off the audio thread and crossfades it in.
 - An Android try-it app over a JNI bridge, published from CI as an arm64
   pre-release on every code push.
 
@@ -153,9 +157,8 @@ Not done:
 
 - The desktop CLI does nothing yet; `cpal` output is not wired.
 - No podcast feeds, no self-hosted sources, no persistence.
-- No shell drives the conductor yet: the Android app and the CLI do not
-  load maps into a running player. No server backends. No tool writes
-  maps.
+- The CLI does not play maps; only the Android app does. No server
+  backends. No tool writes maps.
 - No lock-screen controls, no microphone feed, no real UI.
 - The resampler is linear interpolation. Fine for speech; music under
   speech loses a little top end at 44.1 kHz. Replace with `rubato` when
@@ -172,9 +175,9 @@ desktop playback because that is where listening happens.
    controls, remembered position and files, microphone noise feed, a music
    queue. Then a UI.
 3. **Library layer and map playback.** The trait, local folders, the
-   cache, the conductor, and M4B chapters are in. Next: the Android app
-   loading a map and driving the conductor from a worker thread, then
-   Audiobookshelf, OpenSubsonic, and Jellyfin behind the same trait.
+   cache, the conductor, M4B chapters, and the Android app following a
+   map are in. Next: Audiobookshelf, OpenSubsonic, and Jellyfin behind
+   the same trait.
 4. **Local desktop playback.** `underscore play <book> <music>` via `cpal`.
    Mostly a developer tool for tuning the engine with real material.
 5. **Map authoring.** `underscore map`: transcript in, map out, with the

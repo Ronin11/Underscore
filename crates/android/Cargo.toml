@@ -13,6 +13,8 @@ crate-type = ["cdylib", "rlib"]
 [dependencies]
 underscore-core = { path = "../core" }
 underscore-decode = { path = "../decode" }
+underscore-library = { path = "../library" }
+underscore-map = { path = "../map" }
 jni = "0.21"
 
 [lints]

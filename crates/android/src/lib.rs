@@ -8,21 +8,35 @@
 //! fine at this stage: control calls are rare and the lock is held for one
 //! block at most.
 //!
+//! A music map adds one more thread, started by [`Bridge::shared`]: the
+//! worker in [`follow`] that opens the next track while the lock is free
+//! and hands it to the player with one crossfade.
+//!
 //! No audio is ever written to storage here. Files come in as descriptors
 //! the app opened read-only; the mix leaves through `render` only.
 
 use std::fs::File;
 use std::io::{Seek, SeekFrom};
 use std::os::fd::FromRawFd;
+use std::path::Path;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use underscore_core::{LayerId, Player, PlayerConfig, SleepTimer, Source};
 use underscore_decode::{Chapter, FileSource, MediaSource, probe, probe_path};
+use underscore_library::{Cache, LocalLibrary, Role};
+use underscore_map::Map;
+
+use crate::follow::{Job, MapPlayback, Wake};
 
 /// How far past a chapter start the position may be for the crossing to
 /// count as the previous chapter ending, rather than a seek landing there.
 const CROSSING_WINDOW: Duration = Duration::from_secs(2);
 
+/// How long the map's music takes to fade when the map is removed.
+const CLEAR_FADE: Duration = Duration::from_secs(2);
+
+pub mod follow;
 pub mod jni;
 
 /// A player wired the way the app needs it.
@@ -35,6 +49,10 @@ pub struct Bridge {
     chapters: Vec<Chapter>,
     /// The chapter the position was in at the last render.
     last_chapter: Option<usize>,
+    /// The music map being followed, if one is loaded.
+    map: Option<MapPlayback>,
+    /// Wakes the map worker when a job is waiting.
+    wake: Arc<Wake>,
 }
 
 impl std::fmt::Debug for Bridge {
@@ -42,12 +60,20 @@ impl std::fmt::Debug for Bridge {
         f.debug_struct("Bridge")
             .field("rate", &self.rate)
             .field("channels", &self.channels)
+            .field("map", &self.map)
             .finish_non_exhaustive()
     }
 }
 
+impl Drop for Bridge {
+    fn drop(&mut self) {
+        self.wake.stop();
+    }
+}
+
 impl Bridge {
-    /// A player at the device format, with one music layer.
+    /// A player at the device format, with one music layer. No map worker
+    /// runs; map jobs must be served by hand. See [`Bridge::shared`].
     #[must_use]
     pub fn new(sample_rate: u32, channels: usize) -> Self {
         let mut cfg = PlayerConfig::default();
@@ -62,7 +88,32 @@ impl Bridge {
             channels,
             chapters: Vec::new(),
             last_chapter: None,
+            map: None,
+            wake: Arc::new(Wake::default()),
         }
+    }
+
+    /// A bridge behind a lock, with the map worker running. The worker
+    /// exits when the last reference is dropped.
+    #[must_use]
+    pub fn shared(sample_rate: u32, channels: usize) -> Arc<Mutex<Self>> {
+        let bridge = Self::new(sample_rate, channels);
+        let wake = Arc::clone(&bridge.wake);
+        let shared = Arc::new(Mutex::new(bridge));
+        follow::spawn(Arc::downgrade(&shared), wake);
+        shared
+    }
+
+    /// The engine's sample rate.
+    #[must_use]
+    pub fn sample_rate(&self) -> u32 {
+        self.rate
+    }
+
+    /// The engine's channel count.
+    #[must_use]
+    pub fn channels(&self) -> usize {
+        self.channels
     }
 
     fn decode(&self, source: Box<dyn MediaSource>, hint: Option<&str>) -> Option<Box<dyn Source>> {
@@ -117,9 +168,19 @@ impl Bridge {
         ok
     }
 
+    /// A new book is loaded: keep its chapters and refit the map to it.
     fn set_chapters(&mut self, chapters: Vec<Chapter>) {
         self.chapters = chapters;
         self.last_chapter = None;
+        let starts = self.chapter_starts();
+        if let Some(map) = &mut self.map {
+            map.fit(&starts);
+            self.wake.notify();
+        }
+    }
+
+    fn chapter_starts(&self) -> Vec<Duration> {
+        self.chapters.iter().map(|c| c.start).collect()
     }
 
     /// The loaded book's chapter marks, in order. Empty when it has none.
@@ -183,6 +244,85 @@ impl Bridge {
         let music = self.music;
         FileSource::open_path(path, self.rate, self.channels)
             .is_ok_and(|s| self.player.set_layer_source(music, Box::new(s)).is_ok())
+    }
+
+    /// Parse a map and scan the music folder it will play from. Slow: it
+    /// probes every file under the folder. Run it on a worker thread and
+    /// never under the bridge lock, then hand the result to
+    /// [`Bridge::install_map`].
+    ///
+    /// # Errors
+    /// The map does not parse, the folder cannot be read or holds no
+    /// music, or the cache directory cannot be created.
+    pub fn prepare_map(
+        toml: &str,
+        music_dir: &Path,
+        cache_dir: &Path,
+    ) -> Result<MapPlayback, String> {
+        let map = Map::parse(toml).map_err(|e| e.to_string())?;
+        let library =
+            LocalLibrary::new("music", vec![(Role::Music, music_dir.to_path_buf())], None);
+        let n = library
+            .scan()
+            .map_err(|e| format!("{}: {e}", music_dir.display()))?;
+        if n == 0 {
+            return Err(format!("no music found under {}", music_dir.display()));
+        }
+        let cache = Cache::open(cache_dir).map_err(|e| format!("cache: {e}"))?;
+        Ok(MapPlayback::new(map, Arc::new(library), cache))
+    }
+
+    /// Follow a prepared map. Fits it to the loaded book, if there is one;
+    /// otherwise it is fitted when a book loads. Returns whether it is
+    /// following now.
+    pub fn install_map(&mut self, mut map: MapPlayback) -> bool {
+        let following = map.fit(&self.chapter_starts());
+        self.map = Some(map);
+        self.wake.notify();
+        following
+    }
+
+    /// Stop following the map and fade its music out.
+    pub fn clear_map(&mut self) {
+        if self.map.take().is_some() {
+            let music = self.music;
+            let _ = self.player.crossfade_layer(
+                music,
+                follow::silence(self.rate, self.channels),
+                CLEAR_FADE,
+            );
+        }
+    }
+
+    /// Whether a map is loaded.
+    #[must_use]
+    pub fn has_map(&self) -> bool {
+        self.map.is_some()
+    }
+
+    /// One line on the map for the UI.
+    #[must_use]
+    pub fn map_status(&self) -> String {
+        self.map
+            .as_ref()
+            .map_or_else(|| "No map".to_string(), MapPlayback::status)
+    }
+
+    /// The map job waiting to be opened, for the worker.
+    pub fn take_job(&mut self) -> Option<Job> {
+        self.map.as_mut().and_then(MapPlayback::take)
+    }
+
+    /// The worker opened `job`; apply it unless it is stale.
+    pub fn finish_job(
+        &mut self,
+        job: &Job,
+        result: Result<Box<dyn Source>, underscore_library::Error>,
+    ) {
+        let music = self.music;
+        if let Some(map) = &mut self.map {
+            map.finish(job, result, &mut self.player, music);
+        }
     }
 
     /// The player, for anything not wrapped here.
@@ -293,11 +433,21 @@ impl Bridge {
         self.player.transport().duration()
     }
 
+    /// Whether the music layer has something to play.
+    #[must_use]
+    pub fn music_loaded(&self) -> bool {
+        self.player.engine().layer(self.music).source().is_some()
+    }
+
     /// Render one block of interleaved samples.
     pub fn render(&mut self, out: &mut [f32], now: Duration) -> usize {
         let frames = self.player.render(out, now).frames;
         if !self.chapters.is_empty() {
             self.watch_chapters(now);
+        }
+        let at = self.position();
+        if self.map.as_mut().is_some_and(|m| m.update(at)) {
+            self.wake.notify();
         }
         frames
     }
@@ -321,6 +471,8 @@ pub fn hint_for_mime(mime: &str) -> Option<&'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
+    use underscore_library::Direction;
 
     #[test]
     fn bridge_starts_stopped_and_silent() {
@@ -330,6 +482,7 @@ mod tests {
         assert!(out.iter().all(|v| *v == 0.0));
         assert!(!b.is_playing());
         assert!(b.music_enabled());
+        assert_eq!(b.map_status(), "No map");
     }
 
     #[test]
@@ -405,5 +558,160 @@ mod tests {
     fn missing_file_fails_cleanly() {
         let mut b = Bridge::new(48_000, 2);
         assert!(!b.load_speech_path("/nonexistent/book.m4b"));
+    }
+
+    /// A folder with one short WAV named so the scan reads the artist and
+    /// title off the file name, and a cache dir beside it.
+    fn music_folder(tag: &str) -> (PathBuf, PathBuf) {
+        let dir =
+            std::env::temp_dir().join(format!("underscore-bridge-{}-{tag}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let music = dir.join("music");
+        std::fs::create_dir_all(&music).unwrap();
+        let rate: u32 = 48_000;
+        let frames = rate * 2;
+        let mut bytes = Vec::with_capacity(44 + frames as usize * 2);
+        let data_len = frames * 2;
+        bytes.extend_from_slice(b"RIFF");
+        bytes.extend_from_slice(&(36 + data_len).to_le_bytes());
+        bytes.extend_from_slice(b"WAVEfmt ");
+        bytes.extend_from_slice(&16u32.to_le_bytes());
+        bytes.extend_from_slice(&1u16.to_le_bytes());
+        bytes.extend_from_slice(&1u16.to_le_bytes());
+        bytes.extend_from_slice(&rate.to_le_bytes());
+        bytes.extend_from_slice(&(rate * 2).to_le_bytes());
+        bytes.extend_from_slice(&2u16.to_le_bytes());
+        bytes.extend_from_slice(&16u16.to_le_bytes());
+        bytes.extend_from_slice(b"data");
+        bytes.extend_from_slice(&data_len.to_le_bytes());
+        for i in 0..frames {
+            #[allow(clippy::cast_possible_truncation)]
+            let v = ((f64::from(i) * 0.05).sin() * 8000.0) as i16;
+            bytes.extend_from_slice(&v.to_le_bytes());
+        }
+        std::fs::write(music.join("Yo-Yo Ma - Prelude.wav"), bytes).unwrap();
+        (music, dir.join("cache"))
+    }
+
+    const MAP: &str = r#"
+        version = 1
+        [defaults]
+        fade_in = "0.1"
+        fade_out = "0.1"
+        [[cue]]
+        at = { chapter = 2, offset = "0" }
+        until = { chapter = 3, offset = "0" }
+        track = { artist = "Yo-Yo Ma", title = "Prelude" }
+    "#;
+
+    #[test]
+    fn map_follows_the_book_when_jobs_are_served_by_hand() {
+        let (music, cache) = music_folder("by-hand");
+        let mut b = Bridge::new(48_000, 2);
+        assert!(b.load_speech_path(&fixture()));
+        let prepared = Bridge::prepare_map(MAP, &music, &cache).unwrap();
+        assert!(b.install_map(prepared));
+        assert!(b.map_status().starts_with("Map: 1 of 1 cues found"));
+        assert!(!b.music_loaded());
+
+        let mut out = vec![0.0; 2048];
+        b.render(&mut out, Duration::ZERO);
+        assert!(b.take_job().is_none(), "no cue at the start of the book");
+
+        // Into chapter two: the cue starts.
+        b.seek(Duration::from_secs(4));
+        b.render(&mut out, Duration::ZERO);
+        let job = b.take_job().expect("a play job");
+        assert!(matches!(job.direction(), Direction::Play { cue: 0, .. }));
+        let opened = job.open(48_000, 2);
+        assert!(opened.is_ok(), "{:?}", opened.err());
+        b.finish_job(&job, opened);
+        assert!(b.music_loaded());
+        assert!(b.map_status().contains("Now: cue 1, Prelude by Yo-Yo Ma"));
+
+        // Into chapter three: the cue ends. Then back into two before the
+        // worker gets to it: the silence job is stale and must be dropped.
+        b.seek(Duration::from_secs(8));
+        b.render(&mut out, Duration::ZERO);
+        let stale = b.take_job().expect("a silence job");
+        assert!(matches!(stale.direction(), Direction::Silence { .. }));
+        b.seek(Duration::from_secs(4));
+        b.render(&mut out, Duration::ZERO);
+        let fresh = b.take_job().expect("a play job again");
+        let opened = stale.open(48_000, 2);
+        b.finish_job(&stale, opened);
+        assert!(matches!(fresh.direction(), Direction::Play { .. }));
+        assert!(b.map_status().contains("Now: cue 1"));
+
+        b.clear_map();
+        assert_eq!(b.map_status(), "No map");
+        assert!(!b.has_map());
+    }
+
+    #[test]
+    fn a_map_with_chapters_waits_for_a_book_that_has_them() {
+        let (music, cache) = music_folder("waits");
+        let mut b = Bridge::new(48_000, 2);
+        let prepared = Bridge::prepare_map(MAP, &music, &cache).unwrap();
+        assert!(!b.install_map(prepared));
+        assert!(b.map_status().contains("not following"));
+        assert!(b.load_speech_path(&fixture()));
+        assert!(b.map_status().starts_with("Map: 1 of 1"));
+    }
+
+    #[test]
+    fn prepare_map_reports_what_is_wrong() {
+        let (music, cache) = music_folder("errors");
+        assert!(Bridge::prepare_map("version = 1\n[[cue]]\nat = 0", &music, &cache).is_err());
+        let empty = music.join("empty");
+        std::fs::create_dir_all(&empty).unwrap();
+        let err = Bridge::prepare_map(MAP, &empty, &cache).unwrap_err();
+        assert!(err.contains("no music found"), "{err}");
+    }
+
+    #[test]
+    fn the_worker_thread_applies_directions() {
+        let (music, cache) = music_folder("worker");
+        // Built by hand rather than with `shared` so the worker can be
+        // joined at the end.
+        let bridge = Bridge::new(48_000, 2);
+        let wake = Arc::clone(&bridge.wake);
+        let shared = Arc::new(Mutex::new(bridge));
+        let worker = follow::spawn(Arc::downgrade(&shared), wake);
+        {
+            let mut b = shared.lock().unwrap();
+            assert!(b.load_speech_path(&fixture()));
+            let prepared = Bridge::prepare_map(MAP, &music, &cache).unwrap();
+            assert!(b.install_map(prepared));
+            b.seek(Duration::from_secs(4));
+        }
+        let mut out = vec![0.0; 2048];
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        loop {
+            let loaded = {
+                let mut b = shared.lock().unwrap();
+                b.render(&mut out, Duration::ZERO);
+                b.music_loaded()
+            };
+            if loaded {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the worker never applied the cue"
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        // Dropping the last reference stops the worker.
+        drop(shared);
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = tx.send(worker.join().is_ok());
+        });
+        assert_eq!(
+            rx.recv_timeout(Duration::from_secs(5)),
+            Ok(true),
+            "the worker did not exit after the bridge was dropped"
+        );
     }
 }

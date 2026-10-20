@@ -108,8 +108,11 @@ Three pieces, all in:
   Silence is asked for once, not again for every silent stretch. `open`
   fetches and decodes the item and wraps it in a `Region` and a `Gain`;
   `apply` is one crossfade on the music layer. A shell runs `open` off
-  the audio thread. Done. What is not done is a shell that calls it: the
-  Android app does not load maps yet.
+  the audio thread. Done.
+- **The Android app.** Pick a music folder and a map; the bridge asks the
+  conductor on every render block and a worker thread opens each track
+  while the lock is free. `docs/android.md` has the details. Done. The
+  CLI does not play maps until desktop playback arrives.
 
 `underscore map check <map> --music <folder>` resolves a map against a
 folder and prints how each cue landed, which is the quickest way to see

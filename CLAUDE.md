@@ -26,7 +26,8 @@ crates/map       Music maps: the TOML format, validation, and the schedule that
 crates/library   The Library trait (list, search, fetch, progress), LocalLibrary
                  over folders, the per-stream Cache, and the Conductor that turns
                  a map plus the book position into player directions.
-crates/android   Bridge (plain Rust over Player) and jni.rs (JNI exports).
+crates/android   Bridge (plain Rust over Player), follow.rs (the map worker
+                 thread), and jni.rs (JNI exports).
 crates/cli       `underscore` binary. `scan` and `map check`; no playback yet.
 android/         Gradle project. Engine.kt (JNI wrapper), PlaybackService.kt
                  (foreground service, AudioTrack render thread), MainActivity.kt
@@ -52,6 +53,9 @@ android/         Gradle project. Engine.kt (JNI wrapper), PlaybackService.kt
   from the engine.
 - `Conductor::update` is cheap and may run anywhere. `conductor::open`
   does I/O and must not run on the audio thread or under the bridge lock.
+  On Android that means the worker in `crates/android/src/follow.rs`;
+  `Bridge::prepare_map` scans a folder and is called before the lock is
+  taken, from a Kotlin background thread.
 
 ## Checks before any commit
 

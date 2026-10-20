@@ -9,9 +9,11 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.Environment
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.provider.DocumentsContract
 import android.provider.OpenableColumns
 import android.view.Gravity
 import android.view.View
@@ -26,6 +28,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
+import java.io.File
 import java.util.Locale
 
 /**
@@ -46,6 +49,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var sleepLabel: TextView
     private lateinit var chapterLabel: TextView
     private lateinit var chaptersButton: Button
+    private lateinit var mapLabel: TextView
     private lateinit var progress: SeekBar
     private var scrubbing = false
 
@@ -66,7 +70,16 @@ class MainActivity : AppCompatActivity() {
     private val pickMusic = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         uri?.let { load(it, speech = false) }
     }
+    private val pickMusicFolder = registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
+        uri?.let { chooseMusicFolder(it) }
+    }
+    private val pickMap = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        uri?.let { loadMap(it) }
+    }
     private val askNotifications = registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
+    private val askAudioRead = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (!granted) Toast.makeText(this, "Without audio access the music folder cannot be read", Toast.LENGTH_LONG).show()
+    }
 
     private val tick = object : Runnable {
         override fun run() {
@@ -111,6 +124,62 @@ class MainActivity : AppCompatActivity() {
         refresh()
     }
 
+    /**
+     * The map's music comes from a folder the engine scans by path. The
+     * tree picker gives a document URI; on device storage that maps to a
+     * path the scan can walk, given the audio permission.
+     */
+    private fun chooseMusicFolder(uri: Uri) {
+        val s = service ?: return
+        val dir = folderPath(uri)
+        if (dir == null) {
+            Toast.makeText(this, "Pick a folder on this device's storage", Toast.LENGTH_LONG).show()
+            return
+        }
+        s.musicDir = dir
+        val permission = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            Manifest.permission.READ_MEDIA_AUDIO
+        } else {
+            Manifest.permission.READ_EXTERNAL_STORAGE
+        }
+        if (ContextCompat.checkSelfPermission(this, permission) != PackageManager.PERMISSION_GRANTED) {
+            askAudioRead.launch(permission)
+        }
+        refresh()
+    }
+
+    /** A document-tree URI as a path, when it is on device storage. */
+    private fun folderPath(uri: Uri): File? {
+        if (uri.authority != "com.android.externalstorage.documents") return null
+        val docId = DocumentsContract.getTreeDocumentId(uri)
+        val volume = docId.substringBefore(':')
+        val rel = docId.substringAfter(':', "")
+        val root = if (volume == "primary") {
+            Environment.getExternalStorageDirectory()
+        } else {
+            File("/storage/$volume")
+        }
+        return File(root, rel).takeIf { it.isDirectory }
+    }
+
+    private fun loadMap(uri: Uri) {
+        val s = service ?: return
+        val name = displayName(uri)
+        val text = try {
+            contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() }
+        } catch (e: Exception) {
+            null
+        }
+        if (text == null) {
+            Toast.makeText(this, "Could not read ${name ?: "the map"}", Toast.LENGTH_LONG).show()
+            return
+        }
+        s.loadMap(text, name) { problem ->
+            if (problem != null) Toast.makeText(this, problem, Toast.LENGTH_LONG).show()
+            refresh()
+        }
+    }
+
     private fun displayName(uri: Uri): String? =
         contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { c ->
             if (c.moveToFirst()) c.getString(0) else null
@@ -124,7 +193,8 @@ class MainActivity : AppCompatActivity() {
         val e = s.engine
         val pos = e.positionMs
         val dur = e.durationMs
-        files.text = "Book: ${s.speechName ?: "none"}\nMusic: ${s.musicName ?: "none"}"
+        files.text = "Book: ${s.speechName ?: "none"}\nMusic: ${s.musicName ?: "none"}\n" +
+            "Music folder: ${s.musicDir?.name ?: "none"}\nMap: ${s.mapName ?: "none"}"
         status.text = "${fmt(pos)} / ${if (dur >= 0) fmt(dur) else "?"}"
         playButton.text = if (e.isPlaying) "Pause" else "Play"
         musicButton.text = if (e.musicEnabled) "Music: on" else "Music: off"
@@ -138,6 +208,7 @@ class MainActivity : AppCompatActivity() {
                 (e.chapterTitle(chapter)?.let { ": $it" } ?: "")
         }
         chaptersButton.isEnabled = chapters > 0
+        mapLabel.text = if (s.mapLoading) "Loading map, scanning the music folder…" else e.mapStatus
         val left = e.sleepRemainingMs(s.now())
         sleepLabel.text = when {
             left >= 0 -> "Sleep in ${fmt(left)}"
@@ -255,6 +326,14 @@ class MainActivity : AppCompatActivity() {
             button("Sleep at chapter end") { service?.let { it.engine.setSleepEndOfChapter(it.now()) } },
         )
 
+        mapLabel = TextView(this).apply { setPadding(0, pad, 0, 0) }
+        root.addView(mapLabel)
+        row(
+            button("Music folder") { pickMusicFolder.launch(null) },
+            button("Pick map") { pickMap.launch(MAP_TYPES) },
+            button("Clear map") { service?.clearMap() },
+        )
+
         musicButton = button("Music: on") {
             service?.engine?.let { it.setMusicEnabled(!it.musicEnabled) }
         }
@@ -286,5 +365,7 @@ class MainActivity : AppCompatActivity() {
 
     companion object {
         private val AUDIO_TYPES = arrayOf("audio/*", "application/ogg", "video/mp4")
+        // Maps are TOML; the picker rarely knows that type, so allow anything.
+        private val MAP_TYPES = arrayOf("*/*")
     }
 }

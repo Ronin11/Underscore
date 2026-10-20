@@ -17,6 +17,7 @@ import android.os.Build
 import android.os.IBinder
 import android.os.SystemClock
 import androidx.core.app.NotificationCompat
+import java.io.File
 
 /**
  * Owns the engine and the audio device. Runs in the foreground so playback
@@ -41,6 +42,13 @@ class PlaybackService : Service() {
     var speechName: String? = null
         private set
     var musicName: String? = null
+        private set
+    var mapName: String? = null
+        private set
+    /** The folder a map plays from. Picked by the activity, scanned by the engine. */
+    var musicDir: File? = null
+    /** True while a map is being loaded and its folder scanned. */
+    @Volatile var mapLoading = false
         private set
 
     override fun onCreate() {
@@ -78,6 +86,35 @@ class PlaybackService : Service() {
         if (ok) musicName = name
         return ok
     }
+
+    /**
+     * Follow a music map. The engine scans [musicDir] first, which takes a
+     * while on a big folder, so this runs on its own thread and reports
+     * through [onDone] on the main thread: null when the map is loaded,
+     * otherwise what was wrong.
+     */
+    fun loadMap(toml: String, name: String?, onDone: (String?) -> Unit) {
+        val dir = musicDir
+        if (dir == null) {
+            onDone("Pick a music folder first")
+            return
+        }
+        val cache = File(cacheDir, "library")
+        mapLoading = true
+        Thread({
+            val problem = engine.loadMap(toml, dir.absolutePath, cache.absolutePath)
+            if (problem == null) mapName = name
+            mapLoading = false
+            mainHandler.post { onDone(problem) }
+        }, "underscore-map-load").start()
+    }
+
+    fun clearMap() {
+        engine.clearMap()
+        mapName = null
+    }
+
+    private val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
 
     private fun load(uri: Uri, into: (Int, String?) -> Boolean): Boolean {
         val pfd = contentResolver.openFileDescriptor(uri, "r") ?: return false

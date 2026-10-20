@@ -512,6 +512,8 @@ dependencies = [
  "jni",
  "underscore-core",
  "underscore-decode",
+ "underscore-library",
+ "underscore-map",
 ]
 
 [[package]]

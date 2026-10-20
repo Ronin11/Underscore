@@ -4,6 +4,10 @@
 //! `nativeCreate` and holds the bridge mutex for the duration of the call.
 //! Times arrive as milliseconds on Android's monotonic `elapsedRealtime`
 //! clock; the engine only needs them to be monotonic.
+//!
+//! `nativeLoadMap` is the one call that does real work: it scans a music
+//! folder. It does that before taking the lock, and the Kotlin side calls
+//! it from a background thread.
 
 #![allow(
     clippy::missing_safety_doc,
@@ -11,7 +15,8 @@
     clippy::not_unsafe_ptr_arg_deref
 )]
 
-use std::sync::Mutex;
+use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use jni::JNIEnv;
@@ -20,6 +25,8 @@ use jni::sys::{JNI_FALSE, JNI_TRUE, jboolean, jfloat, jint, jlong, jstring};
 
 use crate::{Bridge, hint_for_mime};
 
+/// The Kotlin handle points at the mutex inside an `Arc`; the map worker
+/// holds the `Arc` weakly.
 type Handle = Mutex<Bridge>;
 
 fn ms(v: jlong) -> Duration {
@@ -35,8 +42,9 @@ fn with<R>(handle: jlong, default: R, f: impl FnOnce(&mut Bridge) -> R) -> R {
     if handle == 0 {
         return default;
     }
-    // SAFETY: `handle` came from `nativeCreate` and has not been passed to
-    // `nativeDestroy`; the Kotlin wrapper guarantees both.
+    // SAFETY: `handle` came from `nativeCreate`, which leaked an `Arc`
+    // pointing at this mutex, and has not been passed to `nativeDestroy`;
+    // the Kotlin wrapper guarantees both.
     let m = unsafe { &*(handle as *const Handle) };
     match m.lock() {
         Ok(mut b) => f(&mut b),
@@ -48,12 +56,21 @@ fn jbool(v: bool) -> jboolean {
     if v { JNI_TRUE } else { JNI_FALSE }
 }
 
-fn hint(env: &mut JNIEnv, mime: &JString) -> Option<&'static str> {
-    if mime.is_null() {
+fn string(env: &mut JNIEnv, s: &JString) -> Option<String> {
+    if s.is_null() {
         return None;
     }
-    let s: String = env.get_string(mime).ok()?.into();
-    hint_for_mime(&s)
+    env.get_string(s).ok().map(Into::into)
+}
+
+fn hint(env: &mut JNIEnv, mime: &JString) -> Option<&'static str> {
+    hint_for_mime(&string(env, mime)?)
+}
+
+/// A Java string, or null if it could not be made.
+fn jstr(env: &JNIEnv, s: &str) -> jstring {
+    env.new_string(s)
+        .map_or(std::ptr::null_mut(), JString::into_raw)
 }
 
 #[unsafe(no_mangle)]
@@ -65,8 +82,7 @@ pub extern "system" fn Java_io_github_ronin11_underscore_Engine_nativeCreate(
 ) -> jlong {
     let rate = u32::try_from(sample_rate).unwrap_or(48_000).max(8_000);
     let ch = usize::try_from(channels).unwrap_or(2).clamp(1, 8);
-    let boxed: Box<Handle> = Box::new(Mutex::new(Bridge::new(rate, ch)));
-    Box::into_raw(boxed) as jlong
+    Arc::into_raw(Bridge::shared(rate, ch)) as jlong
 }
 
 #[unsafe(no_mangle)]
@@ -77,7 +93,9 @@ pub extern "system" fn Java_io_github_ronin11_underscore_Engine_nativeDestroy(
 ) {
     if handle != 0 {
         // SAFETY: created by `nativeCreate`, destroyed exactly once here.
-        drop(unsafe { Box::from_raw(handle as *mut Handle) });
+        // The map worker may hold the bridge a moment longer while it
+        // finishes a job; it exits once the bridge is gone.
+        drop(unsafe { Arc::from_raw(handle as *const Handle) });
     }
 }
 
@@ -311,11 +329,70 @@ pub extern "system" fn Java_io_github_ronin11_underscore_Engine_nativeChapterTit
             .and_then(|c| c.title.clone())
     });
     match title {
-        Some(t) => env
-            .new_string(t)
-            .map_or(std::ptr::null_mut(), JString::into_raw),
+        Some(t) => jstr(&env, &t),
         None => std::ptr::null_mut(),
     }
+}
+
+/// Load a music map and the folder it plays from. Returns null when the
+/// map is loaded, otherwise a message saying what was wrong. Slow: scans
+/// the folder before taking the lock. Call it from a background thread.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_io_github_ronin11_underscore_Engine_nativeLoadMap(
+    mut env: JNIEnv,
+    _this: JObject,
+    handle: jlong,
+    toml: JString,
+    music_dir: JString,
+    cache_dir: JString,
+) -> jstring {
+    let args = (
+        string(&mut env, &toml),
+        string(&mut env, &music_dir),
+        string(&mut env, &cache_dir),
+    );
+    let (Some(toml), Some(music_dir), Some(cache_dir)) = args else {
+        return jstr(&env, "map, music folder, and cache folder are all needed");
+    };
+    if handle == 0 {
+        return jstr(&env, "engine closed");
+    }
+    match Bridge::prepare_map(&toml, &PathBuf::from(music_dir), &PathBuf::from(cache_dir)) {
+        Ok(prepared) => {
+            with(handle, false, |b| b.install_map(prepared));
+            std::ptr::null_mut()
+        }
+        Err(e) => jstr(&env, &e),
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_io_github_ronin11_underscore_Engine_nativeClearMap(
+    _env: JNIEnv,
+    _this: JObject,
+    handle: jlong,
+) {
+    with(handle, (), Bridge::clear_map);
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_io_github_ronin11_underscore_Engine_nativeHasMap(
+    _env: JNIEnv,
+    _this: JObject,
+    handle: jlong,
+) -> jboolean {
+    jbool(with(handle, false, |b| b.has_map()))
+}
+
+/// One line on the map for the UI. Never null.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_io_github_ronin11_underscore_Engine_nativeMapStatus(
+    env: JNIEnv,
+    _this: JObject,
+    handle: jlong,
+) -> jstring {
+    let status = with(handle, "No map".to_string(), |b| b.map_status());
+    jstr(&env, &status)
 }
 
 /// Where a chapter starts, in milliseconds, or -1 when out of range.
