@@ -55,8 +55,14 @@ or a URI the app has no read grant for.
 1. Lock-screen and headset controls (`MediaSession`), with the notification
    showing position and play/pause.
 2. Remember the last book and music, and the position, across launches.
-3. Chapters from M4B metadata: list, skip, and end-of-chapter sleep.
+3. Load a music map and drive the conductor from a worker thread.
 4. Microphone level for noise compensation (`RECORD_AUDIO`, a short RMS
    window on a low-priority thread, `Engine.setNoiseDb`).
 5. A music queue: a folder or playlist, crossfaded track to track.
 6. A real UI.
+
+Chapters are in: the bridge reads M4B chapter marks when a book loads,
+the activity shows the current chapter and lists them in a dialog that
+jumps on tap, and "Sleep at chapter end" pauses when the boundary passes.
+The bridge detects the crossing during render; a seek that lands just past
+a boundary does not count as one.

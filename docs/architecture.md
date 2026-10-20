@@ -135,7 +135,11 @@ Done:
 - The engine, with tests: layers, chained ducking, fades and crossfades,
   WSOLA speed, auto-level, transport with smart rewind and sleep timers.
 - Decoding: MP3, AAC in M4A and M4B, FLAC, Ogg Vorbis, WAV. Linear
-  resampling and channel mapping. Exact seeks.
+  resampling and channel mapping. Exact seeks. A probe that reads tags,
+  length, and chapter marks without decoding; M4B chapters come from the
+  Nero `chpl` atom or the QuickTime chapter track, whichever the file has.
+- Chapters on Android: a selector, the current chapter in the status, and
+  sleep at the end of the chapter, with the boundary detected in render.
 - The music map format, its parser, the schedule that resolves it against
   chapter times, and the engine's region source for partial and repeated
   tracks. All tested.
@@ -148,11 +152,10 @@ Done:
 Not done:
 
 - The desktop CLI does nothing yet; `cpal` output is not wired.
-- No chapters, no podcast feeds, no self-hosted sources, no persistence.
+- No podcast feeds, no self-hosted sources, no persistence.
 - No shell drives the conductor yet: the Android app and the CLI do not
   load maps into a running player. No server backends. No tool writes
-  maps. M4B chapter atoms are not parsed, so local books have no chapter
-  marks until that lands.
+  maps.
 - No lock-screen controls, no microphone feed, no real UI.
 - The resampler is linear interpolation. Fine for speech; music under
   speech loses a little top end at 44.1 kHz. Replace with `rubato` when
@@ -165,10 +168,11 @@ The order has changed since the first draft: the Android shell came before
 desktop playback because that is where listening happens.
 
 1. **Android try-it build.** Done. See `docs/android.md`.
-2. **Android, usable daily.** Lock-screen controls, remembered position and
-   files, M4B chapters, microphone noise feed, a music queue. Then a UI.
+2. **Android, usable daily.** Chapters are in. Next: lock-screen
+   controls, remembered position and files, microphone noise feed, a music
+   queue. Then a UI.
 3. **Library layer and map playback.** The trait, local folders, the
-   cache, and the conductor are in. Next: M4B chapters, the Android app
+   cache, the conductor, and M4B chapters are in. Next: the Android app
    loading a map and driving the conductor from a worker thread, then
    Audiobookshelf, OpenSubsonic, and Jellyfin behind the same trait.
 4. **Local desktop playback.** `underscore play <book> <music>` via `cpal`.

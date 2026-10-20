@@ -31,6 +31,20 @@ class Engine(sampleRate: Int, val channels: Int) : AutoCloseable {
     val positionMs: Long get() = nativePositionMs(h())
     val durationMs: Long get() = nativeDurationMs(h())
 
+    /** Chapter marks of the loaded book; zero when it has none. */
+    val chapterCount: Int get() = nativeChapterCount(h())
+    /** A chapter's title, or null when it has none. */
+    fun chapterTitle(index: Int): String? = nativeChapterTitle(h(), index)
+    /** Where a chapter starts, or -1 when out of range. */
+    fun chapterStartMs(index: Int): Long = nativeChapterStartMs(h(), index)
+    /** The chapter the book is in, or -1. */
+    val currentChapter: Int get() = nativeCurrentChapter(h())
+    /** Jump to the start of a chapter. */
+    fun seekChapter(index: Int): Boolean = nativeSeekChapter(h(), index)
+    /** Pause when the current chapter ends. */
+    fun setSleepEndOfChapter(nowMs: Long) = nativeSetSleepEndOfChapter(h(), nowMs)
+    val sleepAtChapterEnd: Boolean get() = nativeSleepAtChapterEnd(h())
+
     /** Fill [out] with interleaved samples; returns frames written. */
     fun render(out: FloatArray, nowMs: Long): Int = nativeRender(h(), out, nowMs)
 
@@ -63,6 +77,13 @@ class Engine(sampleRate: Int, val channels: Int) : AutoCloseable {
     private external fun nativeSetNoiseDb(handle: Long, db: Float)
     private external fun nativePositionMs(handle: Long): Long
     private external fun nativeDurationMs(handle: Long): Long
+    private external fun nativeChapterCount(handle: Long): Int
+    private external fun nativeChapterTitle(handle: Long, index: Int): String?
+    private external fun nativeChapterStartMs(handle: Long, index: Int): Long
+    private external fun nativeCurrentChapter(handle: Long): Int
+    private external fun nativeSeekChapter(handle: Long, index: Int): Boolean
+    private external fun nativeSetSleepEndOfChapter(handle: Long, nowMs: Long)
+    private external fun nativeSleepAtChapterEnd(handle: Long): Boolean
     private external fun nativeRender(handle: Long, out: FloatArray, nowMs: Long): Int
 
     companion object {

@@ -23,6 +23,7 @@ import android.widget.SeekBar
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import java.util.Locale
@@ -43,6 +44,8 @@ class MainActivity : AppCompatActivity() {
     private lateinit var musicButton: Button
     private lateinit var speedLabel: TextView
     private lateinit var sleepLabel: TextView
+    private lateinit var chapterLabel: TextView
+    private lateinit var chaptersButton: Button
     private lateinit var progress: SeekBar
     private var scrubbing = false
 
@@ -126,12 +129,45 @@ class MainActivity : AppCompatActivity() {
         playButton.text = if (e.isPlaying) "Pause" else "Play"
         musicButton.text = if (e.musicEnabled) "Music: on" else "Music: off"
         speedLabel.text = String.format(Locale.US, "%.1fx", e.speed)
+        val chapters = e.chapterCount
+        val chapter = e.currentChapter
+        chapterLabel.text = when {
+            chapters == 0 -> "No chapter marks"
+            chapter < 0 -> "$chapters chapters"
+            else -> "Chapter ${chapter + 1} of $chapters" +
+                (e.chapterTitle(chapter)?.let { ": $it" } ?: "")
+        }
+        chaptersButton.isEnabled = chapters > 0
         val left = e.sleepRemainingMs(s.now())
-        sleepLabel.text = if (left >= 0) "Sleep in ${fmt(left)}" else "Sleep: off"
+        sleepLabel.text = when {
+            left >= 0 -> "Sleep in ${fmt(left)}"
+            e.sleepAtChapterEnd -> "Sleep at the end of this chapter"
+            else -> "Sleep: off"
+        }
         if (!scrubbing && dur > 0) {
             progress.max = 1000
             progress.progress = ((pos * 1000) / dur).toInt().coerceIn(0, 1000)
         }
+    }
+
+    /** A list of the book's chapters; picking one jumps to it. */
+    private fun showChapters() {
+        val e = service?.engine ?: return
+        val count = e.chapterCount
+        if (count == 0) return
+        val items = Array(count) { i ->
+            val title = e.chapterTitle(i) ?: "Chapter ${i + 1}"
+            "${i + 1}. $title   ${fmt(e.chapterStartMs(i))}"
+        }
+        AlertDialog.Builder(this)
+            .setTitle("Chapters")
+            .setSingleChoiceItems(items, e.currentChapter) { dialog, which ->
+                e.seekChapter(which)
+                dialog.dismiss()
+                refresh()
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
     }
 
     private fun fmt(ms: Long): String {
@@ -208,6 +244,15 @@ class MainActivity : AppCompatActivity() {
             button("Slower") { service?.engine?.let { it.setSpeed(it.speed - 0.1f) } },
             speedLabel,
             button("Faster") { service?.engine?.let { it.setSpeed(it.speed + 0.1f) } },
+        )
+
+        chapterLabel = TextView(this).apply { gravity = Gravity.CENTER; setPadding(0, pad, 0, 0) }
+        root.addView(chapterLabel)
+        chaptersButton = button("Chapters") { showChapters() }
+        chaptersButton.isEnabled = false
+        row(
+            chaptersButton,
+            button("Sleep at chapter end") { service?.let { it.engine.setSleepEndOfChapter(it.now()) } },
         )
 
         musicButton = button("Music: on") {

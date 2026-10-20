@@ -86,4 +86,4 @@ a music button, smart rewind, and sleep timers. Decoding covers the common
 formats. The Android app is a plain try-it shell: file pickers, transport,
 speed, music button and level, sleep timers, a foreground service so it
 keeps playing with the screen off. See `docs/architecture.md` for what is
-next: self-hosted sources, chapters, lock-screen controls, a real UI.
+next: self-hosted sources, lock-screen controls, a real UI.

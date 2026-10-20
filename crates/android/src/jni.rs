@@ -16,7 +16,7 @@ use std::time::Duration;
 
 use jni::JNIEnv;
 use jni::objects::{JFloatArray, JObject, JString};
-use jni::sys::{JNI_FALSE, JNI_TRUE, jboolean, jfloat, jint, jlong};
+use jni::sys::{JNI_FALSE, JNI_TRUE, jboolean, jfloat, jint, jlong, jstring};
 
 use crate::{Bridge, hint_for_mime};
 
@@ -282,6 +282,101 @@ pub extern "system" fn Java_io_github_ronin11_underscore_Engine_nativeDurationMs
     handle: jlong,
 ) -> jlong {
     with(handle, -1, |b| b.duration().map_or(-1, to_ms))
+}
+
+/// How many chapter marks the book has.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_io_github_ronin11_underscore_Engine_nativeChapterCount(
+    _env: JNIEnv,
+    _this: JObject,
+    handle: jlong,
+) -> jint {
+    with(handle, 0, |b| {
+        jint::try_from(b.chapters().len()).unwrap_or(jint::MAX)
+    })
+}
+
+/// A chapter's title, or null when it has none or `index` is out of range.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_io_github_ronin11_underscore_Engine_nativeChapterTitle(
+    env: JNIEnv,
+    _this: JObject,
+    handle: jlong,
+    index: jint,
+) -> jstring {
+    let title = with(handle, None, |b| {
+        usize::try_from(index)
+            .ok()
+            .and_then(|i| b.chapters().get(i))
+            .and_then(|c| c.title.clone())
+    });
+    match title {
+        Some(t) => env
+            .new_string(t)
+            .map_or(std::ptr::null_mut(), JString::into_raw),
+        None => std::ptr::null_mut(),
+    }
+}
+
+/// Where a chapter starts, in milliseconds, or -1 when out of range.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_io_github_ronin11_underscore_Engine_nativeChapterStartMs(
+    _env: JNIEnv,
+    _this: JObject,
+    handle: jlong,
+    index: jint,
+) -> jlong {
+    with(handle, -1, |b| {
+        usize::try_from(index)
+            .ok()
+            .and_then(|i| b.chapters().get(i))
+            .map_or(-1, |c| to_ms(c.start))
+    })
+}
+
+/// The chapter the book is in, or -1 when it has no chapters.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_io_github_ronin11_underscore_Engine_nativeCurrentChapter(
+    _env: JNIEnv,
+    _this: JObject,
+    handle: jlong,
+) -> jint {
+    with(handle, -1, |b| {
+        b.current_chapter()
+            .and_then(|i| jint::try_from(i).ok())
+            .unwrap_or(-1)
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_io_github_ronin11_underscore_Engine_nativeSeekChapter(
+    _env: JNIEnv,
+    _this: JObject,
+    handle: jlong,
+    index: jint,
+) -> jboolean {
+    jbool(with(handle, false, |b| {
+        usize::try_from(index).is_ok_and(|i| b.seek_chapter(i))
+    }))
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_io_github_ronin11_underscore_Engine_nativeSetSleepEndOfChapter(
+    _env: JNIEnv,
+    _this: JObject,
+    handle: jlong,
+    now_ms: jlong,
+) {
+    with(handle, (), |b| b.set_sleep_end_of_chapter(ms(now_ms)));
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_io_github_ronin11_underscore_Engine_nativeSleepAtChapterEnd(
+    _env: JNIEnv,
+    _this: JObject,
+    handle: jlong,
+) -> jboolean {
+    jbool(with(handle, false, |b| b.sleep_at_chapter_end()))
 }
 
 /// Fill `out` with interleaved samples. Returns frames written.

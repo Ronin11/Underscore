@@ -18,6 +18,7 @@ use symphonia::core::audio::SampleBuffer;
 use symphonia::core::codecs::{CODEC_TYPE_NULL, Decoder, DecoderOptions};
 use symphonia::core::errors::Error as SymError;
 use symphonia::core::formats::{FormatOptions, FormatReader, SeekMode, SeekTo};
+mod mp4;
 pub mod probe;
 
 pub use probe::{Chapter, Probe, Tags, probe, probe_path};

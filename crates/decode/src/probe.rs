@@ -2,6 +2,7 @@
 //! and chapter marks. A library scan does this to every file once.
 
 use std::fs::File;
+use std::io::{Seek, SeekFrom};
 use std::path::Path;
 use std::time::Duration;
 
@@ -71,7 +72,14 @@ pub fn probe_path(path: impl AsRef<Path>) -> Result<Probe, DecodeError> {
 ///
 /// # Errors
 /// If the bytes are not a supported audio file.
-pub fn probe(source: Box<dyn MediaSource>, hint: Option<&str>) -> Result<Probe, DecodeError> {
+pub fn probe(mut source: Box<dyn MediaSource>, hint: Option<&str>) -> Result<Probe, DecodeError> {
+    // MP4 chapter atoms first, on the raw bytes: symphonia does not read
+    // them. Harmless on other formats.
+    let mut mp4_chapters = Vec::new();
+    if source.is_seekable() {
+        mp4_chapters = crate::mp4::chapters(&mut *source)?;
+        source.seek(SeekFrom::Start(0))?;
+    }
     let mss = MediaSourceStream::new(source, MediaSourceStreamOptions::default());
     let mut probe_hint = Hint::new();
     if let Some(ext) = hint {
@@ -134,6 +142,9 @@ pub fn probe(source: Box<dyn MediaSource>, hint: Option<&str>) -> Result<Probe, 
         })
         .collect();
     chapters.sort_by_key(|c| c.start);
+    if chapters.is_empty() {
+        chapters = mp4_chapters;
+    }
 
     Ok(Probe {
         duration,

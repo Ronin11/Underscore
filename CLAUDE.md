@@ -19,6 +19,8 @@ which stretch of a book, as data, never as audio.
 crates/core      the engine: layers, ducking, fades, time-stretch, auto-level,
                  transport, Player facade. Pure f32, no I/O, no platform code.
 crates/decode    FileSource: symphonia decoding, resampling, channel mapping.
+                 probe(): tags, length, chapters without decoding; mp4.rs reads
+                 the M4B chapter atoms symphonia does not.
 crates/map       Music maps: the TOML format, validation, and the schedule that
                  resolves cues against chapter times. Data only, no I/O.
 crates/library   The Library trait (list, search, fetch, progress), LocalLibrary
