@@ -90,42 +90,61 @@ shell (UniFFI bindings over the core crate), configured for background
 playback with the lock screen and headset controls wired to the foreground
 stream, since that is what the listener is "listening to".
 
+## Where things stand
+
+Done:
+
+- The engine, with tests: layers, chained ducking, fades and crossfades,
+  WSOLA speed, auto-level, transport with smart rewind and sleep timers.
+- Decoding: MP3, AAC in M4A and M4B, FLAC, Ogg Vorbis, WAV. Linear
+  resampling and channel mapping. Exact seeks.
+- An Android try-it app over a JNI bridge, published from CI as an arm64
+  pre-release on every code push.
+
+Not done:
+
+- The desktop CLI does nothing yet; `cpal` output is not wired.
+- No chapters, no podcast feeds, no self-hosted sources, no persistence.
+- No lock-screen controls, no microphone feed, no real UI.
+- The resampler is linear interpolation. Fine for speech; music under
+  speech loses a little top end at 44.1 kHz. Replace with `rubato` when
+  quality starts to matter.
+- No soft limiter on the master; the sum is hard-clamped.
+
 ## Milestones
 
-1. **Local desktop playback.** `underscore play <book> <music>` decodes two
-   local files with symphonia, runs them through the engine, and plays on the
-   default device via cpal. Pause, seek, chapter skip, background level.
-2. **Podcast RSS and M4B chapters.** Subscriptions, episode download, chapter
-   navigation as transition events.
-3. **Self-hosted sources.** Audiobookshelf and OpenSubsonic clients with
-   progress sync back to the server.
-4. **Smarter layering.** VAD, music analysis, chapter-aware transitions,
-   gap filling.
-5. **Linux desktop app, packaged and hosted.** A desktop shell over the
-   engine, built in CI and published as downloadable packages: a Flatpak
-   for the broadest reach, plus an AppImage and a `.deb` for people who
-   avoid Flatpak. Releases are hosted as GitHub Releases on this
-   repository, with a Flathub submission once the app is stable.
-6. **Android app.** The Rust core compiled for Android with `cargo-ndk`,
-   a thin Kotlin shell for the audio session, background playback,
-   notification and lock-screen controls, and the microphone level feed for
-   noise compensation. Distributed as a signed APK on GitHub Releases
-   first, then F-Droid, then Play if it earns it. iOS can follow the same
-   pattern later; it is not a target yet.
+The order has changed since the first draft: the Android shell came before
+desktop playback because that is where listening happens.
 
-Desktop milestones exist to get the engine right first. The Android app is
-where the product lives for most listeners.
+1. **Android try-it build.** Done. See `docs/android.md`.
+2. **Android, usable daily.** Lock-screen controls, remembered position and
+   files, M4B chapters, microphone noise feed, a music queue. Then a UI.
+3. **Local desktop playback.** `underscore play <book> <music>` via `cpal`.
+   Mostly a developer tool for tuning the engine with real material.
+4. **Podcast RSS.** Subscriptions, episode download, episodes as transition
+   events.
+5. **Self-hosted sources.** Audiobookshelf and OpenSubsonic clients with
+   progress sync back to the server.
+6. **Smarter layering.** VAD, music energy analysis, chapter-aware
+   transitions, gap filling, a master limiter, a better resampler.
+7. **Linux desktop app, packaged and hosted.** Flatpak, AppImage and `.deb`
+   on GitHub Releases, Flathub once stable.
+8. **Android, released.** A release signing key, F-Droid, then Play if it
+   earns it. iOS can follow the same shape later; it is not a target yet.
 
 ## Release and hosting
 
-Both shells ship from this repository's CI. A tagged commit builds every
-package, runs the full test suite against the exact artifacts, and attaches
-them to a GitHub Release. No package is hand-built. Package manifests and
-signing live in `deploy/` when they arrive.
+Both shells ship from this repository's CI. Today `android.yml` builds the
+Rust library with `cargo-ndk`, assembles the APK with Gradle, and attaches it
+to a pre-release tagged `apk-<run number>` on every code push to `main`,
+signed with the debug key. A release key, version tags, and the desktop
+packages come with milestones 7 and 8. No package is hand-built.
 
 ## Why Rust everywhere
 
 One language for the engine, the decoders, the network clients, and the
 shells means one test suite covers the behavior that matters and one
-toolchain is pinned in `rust-toolchain.toml`. Mobile shells are the only
-place platform code is unavoidable, and UniFFI keeps that to bindings.
+toolchain is pinned in `rust-toolchain.toml`. The Android shell is the one
+place platform code is unavoidable; it is a thin Kotlin layer over a
+hand-written JNI surface in `crates/android`, small enough to read in one
+sitting.

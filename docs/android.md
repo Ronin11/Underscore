@@ -1,0 +1,62 @@
+# The Android app
+
+A Kotlin shell over the Rust engine. Three files:
+
+- `Engine.kt` wraps the JNI exports from `crates/android/src/jni.rs`. One
+  instance owns one native player. Times are milliseconds on
+  `SystemClock.elapsedRealtime()`; the engine only needs them monotonic.
+- `PlaybackService.kt` is a foreground service. It owns the `Engine` and an
+  `AudioTrack` (48 kHz, stereo, float). A render thread asks the engine for
+  1024-frame blocks and writes them straight to the track. Files are opened
+  read-only through the content resolver and the descriptor is detached and
+  handed to Rust, which owns it from then on.
+- `MainActivity.kt` binds to the service and builds its controls in code:
+  file pickers, scrub bar, transport, speed, music button and level, sleep
+  timers. No layout XML, so nothing to keep in sync.
+
+The app has no state of its own: picked files are not remembered across
+launches, and there is no library view yet.
+
+## Install the pre-built APK
+
+Each push to `main` publishes one under
+[Releases](https://github.com/Ronin11/Underscore/releases). Download it on
+the phone, allow installs from the browser when asked, open it. arm64 only.
+
+## Build it yourself
+
+Needs the Android SDK and NDK, Java 17, and the Rust Android target.
+
+```
+rustup target add aarch64-linux-android
+cargo install cargo-ndk
+export ANDROID_NDK_HOME=/path/to/ndk          # the NDK inside your SDK
+cargo ndk --target arm64-v8a --platform 26 \
+  --output-dir android/app/src/main/jniLibs \
+  build --release -p underscore-android
+cd android && ./gradlew assembleDebug
+adb install -r app/build/outputs/apk/debug/app-debug.apk
+```
+
+`jniLibs/` is ignored by git; the `.so` is always a build output. Build the
+Rust side in release even for a debug APK: WSOLA in a debug build is too
+slow to keep up on a phone.
+
+## Debugging
+
+`adb logcat -s AndroidRuntime underscore` shows crashes. A JNI name
+mismatch shows as `UnsatisfiedLinkError` on first use of that function;
+compare `Engine.kt` and `jni.rs`. A file that will not open is reported by a
+toast; the common causes are an unsupported codec (AAX, WMA, Opus in MP4)
+or a URI the app has no read grant for.
+
+## What to add next, in rough order
+
+1. Lock-screen and headset controls (`MediaSession`), with the notification
+   showing position and play/pause.
+2. Remember the last book and music, and the position, across launches.
+3. Chapters from M4B metadata: list, skip, and end-of-chapter sleep.
+4. Microphone level for noise compensation (`RECORD_AUDIO`, a short RMS
+   window on a low-priority thread, `Engine.setNoiseDb`).
+5. A music queue: a folder or playlist, crossfaded track to track.
+6. A real UI.
