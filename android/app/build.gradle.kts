@@ -36,12 +36,26 @@ android {
         buildConfig = true
     }
 
+    signingConfigs {
+        // A key checked into the repo, like Android's own debug key, so every
+        // try-it APK installs over the last one whether CI or a laptop built
+        // it. Not a secret and not a release key: nothing signed with it goes
+        // to a store. The password is the same as the alias.
+        create("tryIt") {
+            storeFile = file("try-it.keystore")
+            storePassword = "underscore"
+            keyAlias = "try-it"
+            keyPassword = "underscore"
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = false
-            // Signed with the debug key until a release key exists; this is
-            // a try-it build, not a store build.
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = signingConfigs.getByName("tryIt")
+        }
+        debug {
+            signingConfig = signingConfigs.getByName("tryIt")
         }
     }
 

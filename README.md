@@ -75,7 +75,7 @@ All three must pass before a change lands. The toolchain is pinned in
 Every push to `main` that touches the code builds an arm64 APK in GitHub
 Actions and publishes it as a pre-release under
 [Releases](https://github.com/Ronin11/Underscore/releases). It is signed
-with a debug key, so Android asks you to allow installs from your browser.
+with a try-it key, so Android asks you to allow installs from your browser.
 Pick a book or podcast file and a music file from your phone, press Play.
 
 ## Status

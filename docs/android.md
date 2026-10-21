@@ -66,6 +66,12 @@ Each push to `main` publishes one under
 [Releases](https://github.com/Ronin11/Underscore/releases). Download it on
 the phone, allow installs from the browser when asked, open it. arm64 only.
 
+Every build, from CI or a laptop, is signed with `android/app/try-it.keystore`,
+a key checked into the repo the way Android's own debug key is shared. That
+is what lets one build install over the previous one. It is not a release
+key and must not become one. A build installed before that key existed has
+to be uninstalled once; after that updates install in place.
+
 ## Build it yourself
 
 Needs the Android SDK and NDK, Java 17, and the Rust Android target.
@@ -84,6 +90,10 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 `jniLibs/` is ignored by git; the `.so` is always a build output. Build the
 Rust side in release even for a debug APK: WSOLA in a debug build is too
 slow to keep up on a phone.
+
+With wireless debugging paired, `adb connect <ip:port>` from the phone's
+developer settings and then `adb install -r` puts a build on the phone
+without going through the browser.
 
 ## Debugging
 

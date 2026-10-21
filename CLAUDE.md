@@ -82,8 +82,9 @@ it is the only compiler for that code in a cloud session.
 
 Every push to `main` that touches `crates/`, `android/`, `Cargo.*` or the
 workflow builds an arm64 APK and publishes it as a pre-release tagged
-`apk-<run number>`. The APK is signed with the debug key; this is for
-trying, not shipping. Docs-only pushes do not trigger it.
+`apk-<run number>`. The APK is signed with `android/app/try-it.keystore`,
+a public key checked into the repo so builds install over each other; this
+is for trying, not shipping. Docs-only pushes do not trigger it.
 
 ## Style
 
