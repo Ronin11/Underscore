@@ -24,7 +24,7 @@ use std::time::Duration;
 
 use underscore_core::{LayerId, Player, PlayerConfig, SleepTimer, Source};
 use underscore_decode::{Chapter, FileSource, MediaSource, probe, probe_path};
-use underscore_library::{Cache, LocalLibrary, Role};
+use underscore_library::{Audiobookshelf, Cache, Credentials, ItemId, LocalLibrary, Role};
 use underscore_map::Map;
 
 use crate::follow::{Job, MapPlayback, Wake};
@@ -53,6 +53,10 @@ pub struct Bridge {
     map: Option<MapPlayback>,
     /// Wakes the map worker when a job is waiting.
     wake: Arc<Wake>,
+    /// The Audiobookshelf server, once signed in.
+    server: Option<Arc<Audiobookshelf>>,
+    /// The server book that is loaded, for progress reports.
+    book: Option<ItemId>,
 }
 
 impl std::fmt::Debug for Bridge {
@@ -90,6 +94,8 @@ impl Bridge {
             last_chapter: None,
             map: None,
             wake: Arc::new(Wake::default()),
+            server: None,
+            book: None,
         }
     }
 
@@ -143,6 +149,7 @@ impl Bridge {
             .decode(Box::new(file), hint)
             .is_some_and(|src| self.player.set_speech_source(src).is_ok());
         if ok {
+            self.book = None;
             self.set_chapters(chapters);
         }
         ok
@@ -166,6 +173,66 @@ impl Bridge {
             self.set_chapters(chapters);
         }
         ok
+    }
+
+    /// Load a book fetched from the server, by its cached path. The
+    /// server's chapter list stands in when the file carries none.
+    pub fn load_server_book(&mut self, path: &str, id: ItemId, chapters: Vec<Chapter>) -> bool {
+        let ok = self.load_speech_path(path);
+        if ok {
+            if self.chapters.is_empty() && !chapters.is_empty() {
+                self.set_chapters(chapters);
+            }
+            self.book = Some(id);
+        }
+        ok
+    }
+
+    /// Sign in to an Audiobookshelf server. Does network I/O: call it off
+    /// the audio thread and outside the lock, then hand the result to
+    /// [`Bridge::set_server`].
+    ///
+    /// # Errors
+    /// The server could not be reached or refused the login.
+    pub fn sign_in(
+        url: &str,
+        username: &str,
+        password: &str,
+    ) -> Result<Arc<Audiobookshelf>, String> {
+        Audiobookshelf::login("abs", url, username, password)
+            .map(Arc::new)
+            .map_err(|e| e.to_string())
+    }
+
+    /// Come back to a server with saved credentials. Checks them with one
+    /// request, so it does network I/O like [`Bridge::sign_in`].
+    ///
+    /// # Errors
+    /// The server could not be reached or no longer accepts the login.
+    pub fn resume_server(url: &str, creds: Credentials) -> Result<Arc<Audiobookshelf>, String> {
+        let server = Audiobookshelf::with_credentials("abs", url, creds);
+        server.whoami().map_err(|e| e.to_string())?;
+        Ok(Arc::new(server))
+    }
+
+    /// Use, or forget, a server.
+    pub fn set_server(&mut self, server: Option<Arc<Audiobookshelf>>) {
+        if server.is_none() {
+            self.book = None;
+        }
+        self.server = server;
+    }
+
+    /// The server in use, shared so callers can talk to it off the lock.
+    #[must_use]
+    pub fn server(&self) -> Option<Arc<Audiobookshelf>> {
+        self.server.clone()
+    }
+
+    /// The server book that is loaded, if the book came from the server.
+    #[must_use]
+    pub fn server_book(&self) -> Option<ItemId> {
+        self.book.clone()
     }
 
     /// A new book is loaded: keep its chapters and refit the map to it.

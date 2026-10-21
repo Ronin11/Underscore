@@ -43,6 +43,24 @@ until the next cue replaces it.
 Folders on the Downloads provider or a cloud provider have no path and
 cannot be scanned; pick one on the device or an SD card.
 
+## Audiobookshelf
+
+"Server" asks for the address, username, and password of an
+Audiobookshelf server and signs in; the tokens are kept in the app's
+private preferences and the password is not. "Server books" lists every
+book the account can see. Picking one downloads its file into the app's
+cache, the same per-stream cache the maps use, loads it, and jumps to
+where the server says the listener was. From then on the app reports
+the position back every half minute while playing and whenever it
+pauses, so other Audiobookshelf clients carry on from the same place.
+The chapter list comes from the server when the file has none.
+
+Only books that are one audio file play for now; a book split across
+many files is listed, and picking it says so. Podcasts are not listed.
+The whole file comes down before playback starts, which on a home
+network is seconds. A plain `http://` address works; the manifest
+allows cleartext for exactly this reason.
+
 ## Lock screen, headset, and other apps
 
 The service holds a `MediaSessionCompat` and a media-style notification

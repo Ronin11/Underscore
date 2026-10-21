@@ -23,6 +23,9 @@ use jni::JNIEnv;
 use jni::objects::{JFloatArray, JObject, JString};
 use jni::sys::{JNI_FALSE, JNI_TRUE, jboolean, jfloat, jint, jlong, jstring};
 
+use underscore_decode::Chapter;
+use underscore_library::{Cache, Credentials, ItemId, Library, Role};
+
 use crate::{Bridge, hint_for_mime};
 
 /// The Kotlin handle points at the mutex inside an `Arc`; the map worker
@@ -477,4 +480,207 @@ pub extern "system" fn Java_io_github_ronin11_underscore_Engine_nativeRender(
         return 0;
     }
     jint::try_from(frames).unwrap_or(jint::MAX)
+}
+
+// Audiobookshelf. Every call that talks to the server does so with the
+// lock released, and the Kotlin side calls them from background threads.
+
+/// Sign in. Null on success, otherwise what went wrong.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_io_github_ronin11_underscore_Engine_nativeServerLogin(
+    mut env: JNIEnv,
+    _this: JObject,
+    handle: jlong,
+    url: JString,
+    username: JString,
+    secret: JString,
+) -> jstring {
+    let args = (
+        string(&mut env, &url),
+        string(&mut env, &username),
+        string(&mut env, &secret),
+    );
+    let (Some(url), Some(username), Some(secret)) = args else {
+        return jstr(
+            &env,
+            "server address, username, and password are all needed",
+        );
+    };
+    match Bridge::sign_in(&url, &username, &secret) {
+        Ok(server) => {
+            with(handle, (), |b| b.set_server(Some(server)));
+            std::ptr::null_mut()
+        }
+        Err(e) => jstr(&env, &e),
+    }
+}
+
+/// Come back with saved credentials. Null on success, otherwise why not.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_io_github_ronin11_underscore_Engine_nativeServerResume(
+    mut env: JNIEnv,
+    _this: JObject,
+    handle: jlong,
+    url: JString,
+    access: JString,
+    refresh: JString,
+) -> jstring {
+    let (Some(url), Some(access)) = (string(&mut env, &url), string(&mut env, &access)) else {
+        return jstr(&env, "server address and token are needed");
+    };
+    let creds = Credentials {
+        access,
+        refresh: string(&mut env, &refresh).filter(|r| !r.is_empty()),
+    };
+    match Bridge::resume_server(&url, creds) {
+        Ok(server) => {
+            with(handle, (), |b| b.set_server(Some(server)));
+            std::ptr::null_mut()
+        }
+        Err(e) => jstr(&env, &e),
+    }
+}
+
+/// The credentials to save: the access token, a newline, and the refresh
+/// token (possibly empty). Null when no server is in use.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_io_github_ronin11_underscore_Engine_nativeServerCredentials(
+    env: JNIEnv,
+    _this: JObject,
+    handle: jlong,
+) -> jstring {
+    let Some(server) = with(handle, None, |b| b.server()) else {
+        return std::ptr::null_mut();
+    };
+    let c = server.credentials();
+    jstr(
+        &env,
+        &format!("{}\n{}", c.access, c.refresh.unwrap_or_default()),
+    )
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_io_github_ronin11_underscore_Engine_nativeServerForget(
+    _env: JNIEnv,
+    _this: JObject,
+    handle: jlong,
+) {
+    with(handle, (), |b| b.set_server(None));
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_io_github_ronin11_underscore_Engine_nativeHasServer(
+    _env: JNIEnv,
+    _this: JObject,
+    handle: jlong,
+) -> jboolean {
+    jbool(with(handle, false, |b| b.server().is_some()))
+}
+
+/// The server's books as JSON: `{"books":[{"id","title","author",
+/// "durationMs"}]}`, or `{"error": "..."}`. Fetches the list every time.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_io_github_ronin11_underscore_Engine_nativeServerBooks(
+    env: JNIEnv,
+    _this: JObject,
+    handle: jlong,
+) -> jstring {
+    let answer = |v: serde_json::Value| jstr(&env, &v.to_string());
+    let Some(server) = with(handle, None, |b| b.server()) else {
+        return answer(serde_json::json!({ "error": "not signed in" }));
+    };
+    let books = server
+        .refresh_items()
+        .and_then(|_| server.items(Role::Speech));
+    match books {
+        Ok(books) => {
+            let list: Vec<serde_json::Value> = books
+                .iter()
+                .map(|b| {
+                    serde_json::json!({
+                        "id": b.id.0,
+                        "title": b.title,
+                        "author": b.artist.clone().unwrap_or_default(),
+                        "durationMs": b.duration.map_or(-1, to_ms),
+                    })
+                })
+                .collect();
+            answer(serde_json::json!({ "books": list }))
+        }
+        Err(e) => answer(serde_json::json!({ "error": e.to_string() })),
+    }
+}
+
+/// Fetch a server book into the cache under `cache_dir`, load it as the
+/// book, and move to where the server says the listener was. Null on
+/// success, otherwise what went wrong. Slow: the whole file comes down.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_io_github_ronin11_underscore_Engine_nativeServerOpen(
+    mut env: JNIEnv,
+    _this: JObject,
+    handle: jlong,
+    id: JString,
+    cache_dir: JString,
+) -> jstring {
+    let (Some(id), Some(cache_dir)) = (string(&mut env, &id), string(&mut env, &cache_dir)) else {
+        return jstr(&env, "book id and cache folder are needed");
+    };
+    let Some(server) = with(handle, None, |b| b.server()) else {
+        return jstr(&env, "not signed in");
+    };
+    let id = ItemId(id);
+    let cache = match Cache::open(PathBuf::from(cache_dir)) {
+        Ok(c) => c,
+        Err(e) => return jstr(&env, &format!("cache: {e}")),
+    };
+    let item = match server.item(&id) {
+        Ok(i) => i,
+        Err(e) => return jstr(&env, &e.to_string()),
+    };
+    let path = match server.fetch(&id, &cache) {
+        Ok(p) => p,
+        Err(e) => return jstr(&env, &e.to_string()),
+    };
+    let Some(path) = path.to_str().map(ToOwned::to_owned) else {
+        return jstr(&env, "cached file has a path that is not text");
+    };
+    let chapters: Vec<Chapter> = item
+        .chapters
+        .iter()
+        .map(|c| Chapter {
+            title: c.title.clone(),
+            start: c.start,
+        })
+        .collect();
+    // Where the listener was, by the server's account. Not worth failing
+    // the load over.
+    let resume = server.progress(&id).ok().flatten();
+    let loaded = with(handle, false, |b| {
+        let ok = b.load_server_book(&path, id, chapters);
+        if ok && let Some(at) = resume {
+            b.seek(at);
+        }
+        ok
+    });
+    if loaded {
+        std::ptr::null_mut()
+    } else {
+        jstr(&env, &format!("could not decode {}", item.title))
+    }
+}
+
+/// Tell the server where the listener is in the loaded server book.
+/// Does nothing, and returns false, when the book is not from the server.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_io_github_ronin11_underscore_Engine_nativeServerSync(
+    _env: JNIEnv,
+    _this: JObject,
+    handle: jlong,
+) -> jboolean {
+    let Some((server, book, at)) = with(handle, None, |b| {
+        Some((b.server()?, b.server_book()?, b.position()))
+    }) else {
+        return JNI_FALSE;
+    };
+    jbool(server.report_progress(&book, at).is_ok())
 }

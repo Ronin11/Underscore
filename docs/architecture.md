@@ -36,12 +36,18 @@ probes every file for tags, length, and chapter marks, with the file name
 and folder layout as the fallback when tags are missing. Progress lives in
 a JSON file.
 
-Server backends will fetch an item into the `Cache` first and play it from
+Server backends fetch an item into the `Cache` first and play it from
 there, exactly as a local file. That reuses the whole local path and keeps
-network code out of the audio thread. Streaming over HTTP range requests
-can replace the download later, behind the same `fetch`, when first-play
-latency on a large book matters. The cache holds single items of the
-listener's own library and has no API that takes audio from the engine.
+network code out of the audio thread. `Audiobookshelf` is the first one:
+sign in with a password or saved tokens, list the book libraries, fetch a
+book's file by its inode id, and read and write progress through the
+server's progress records, with an expired access token renewed once and
+the request repeated. Books that are one audio file play; split books
+are listed but refused with a reason, and podcasts are not listed yet.
+Streaming over HTTP range requests can replace the download later, behind
+the same `fetch`, when first-play latency on a large book matters. The
+cache holds single items of the listener's own library and has no API
+that takes audio from the engine.
 
 The conductor is the glue between a music map and the player. It resolves
 every cue's track against the music library once (named track first, vibe

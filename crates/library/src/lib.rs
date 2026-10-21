@@ -17,6 +17,7 @@
 //! [`conductor`] is the glue between a music map and the player: it turns
 //! the book's position into "play this region of this track now".
 
+pub mod abs;
 pub mod cache;
 pub mod conductor;
 pub mod local;
@@ -27,6 +28,7 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
+pub use abs::{Audiobookshelf, Credentials};
 pub use cache::Cache;
 pub use conductor::{Conductor, Direction, Resolution};
 pub use local::LocalLibrary;

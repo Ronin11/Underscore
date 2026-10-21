@@ -10,7 +10,9 @@ use std::process::ExitCode;
 use std::time::Duration;
 
 use underscore_core::PlayerConfig;
-use underscore_library::{Conductor, Library, LocalLibrary, Resolution, Role};
+use underscore_library::{
+    Audiobookshelf, Cache, Conductor, Credentials, Library, LocalLibrary, Resolution, Role,
+};
 use underscore_map::{Map, Timeline};
 
 fn main() -> ExitCode {
@@ -31,6 +33,7 @@ fn main() -> ExitCode {
         }
         ["scan", rest @ ..] => scan(rest),
         ["map", "check", rest @ ..] => map_check(rest),
+        ["abs", rest @ ..] => abs(rest),
         [other, ..] => Err(format!("unknown command `{other}`")),
     };
     match result {
@@ -188,6 +191,88 @@ fn map_check(args: &[&str]) -> Result<(), String> {
 
 fn clock(d: Duration) -> String {
     underscore_map::Time::from(d).to_string()
+}
+
+/// `abs list|fetch <id> --cache <dir>|progress <id>`: talk to an
+/// Audiobookshelf server. The address and login come from `ABS_URL` with
+/// `ABS_USER` and `ABS_PASS` or `ABS_TOKEN`, from the environment or from
+/// `~/.config/underscore/abs.env`.
+fn abs(args: &[&str]) -> Result<(), String> {
+    let env = abs_env();
+    let var = |k: &str| std::env::var(k).ok().or_else(|| env.get(k).cloned());
+    let url = var("ABS_URL").ok_or("ABS_URL is not set")?;
+    let server = match (var("ABS_TOKEN"), var("ABS_USER"), var("ABS_PASS")) {
+        (Some(token), _, _) => Audiobookshelf::with_credentials(
+            "abs",
+            &url,
+            Credentials {
+                access: token,
+                refresh: None,
+            },
+        ),
+        (None, Some(user), Some(pass)) => {
+            Audiobookshelf::login("abs", &url, &user, &pass).map_err(|e| e.to_string())?
+        }
+        _ => return Err("set ABS_TOKEN, or ABS_USER and ABS_PASS".into()),
+    };
+    match args {
+        ["list"] => {
+            println!(
+                "signed in as {}",
+                server.whoami().map_err(|e| e.to_string())?
+            );
+            let books = server.items(Role::Speech).map_err(|e| e.to_string())?;
+            for b in &books {
+                println!(
+                    "{}  {}  by {}  {}  [{}]",
+                    b.id,
+                    b.title,
+                    b.artist.as_deref().unwrap_or("?"),
+                    b.duration.map_or_else(|| "?".into(), clock),
+                    b.tags.join(", "),
+                );
+            }
+            println!("{} books", books.len());
+            Ok(())
+        }
+        ["fetch", id, "--cache", dir] => {
+            let cache = Cache::open(PathBuf::from(dir)).map_err(|e| e.to_string())?;
+            let item = server.item(&(*id).into()).map_err(|e| e.to_string())?;
+            println!("{}: {} chapters", item.title, item.chapters.len());
+            let started = std::time::Instant::now();
+            let path = server
+                .fetch(&(*id).into(), &cache)
+                .map_err(|e| e.to_string())?;
+            let size = std::fs::metadata(&path).map_or(0, |m| m.len());
+            println!(
+                "{} ({} MB) in {:.1} s",
+                path.display(),
+                size / 1_048_576,
+                started.elapsed().as_secs_f64()
+            );
+            Ok(())
+        }
+        ["progress", id] => {
+            let at = server.progress(&(*id).into()).map_err(|e| e.to_string())?;
+            println!("{}", at.map_or_else(|| "not started".into(), clock));
+            Ok(())
+        }
+        _ => Err("abs takes `list`, `fetch <id> --cache <dir>`, or `progress <id>`".into()),
+    }
+}
+
+/// `KEY=VALUE` lines from `~/.config/underscore/abs.env`, if it exists.
+fn abs_env() -> std::collections::HashMap<String, String> {
+    let Some(home) = std::env::var_os("HOME") else {
+        return std::collections::HashMap::new();
+    };
+    let path = PathBuf::from(home).join(".config/underscore/abs.env");
+    std::fs::read_to_string(path)
+        .unwrap_or_default()
+        .lines()
+        .filter_map(|l| l.split_once('='))
+        .map(|(k, v)| (k.trim().to_string(), v.trim().to_string()))
+        .collect()
 }
 
 fn print_help() {

@@ -78,6 +78,18 @@ class PlaybackService : Service() {
     /** True while a map is being loaded and its folder scanned. */
     @Volatile var mapLoading = false
         private set
+    /** The Audiobookshelf address in use, or the last one tried. */
+    var serverUrl: String? = null
+        private set
+    /** What the server thread is doing right now, for the UI; null when idle. */
+    @Volatile var serverBusy: String? = null
+        private set
+    private var lastSyncMs = 0L
+    @Volatile private var syncing = false
+    private val prefs by lazy { getSharedPreferences("server", Context.MODE_PRIVATE) }
+
+    /** One book on the server, as the list shows it. */
+    data class ServerBook(val id: String, val title: String, val author: String, val durationMs: Long)
 
     // What the session and notification last showed, to publish only on change.
     private var shownPlaying = false
@@ -125,6 +137,7 @@ class PlaybackService : Service() {
     private val stateTick = object : Runnable {
         override fun run() {
             publishStateIfChanged()
+            if (engine.isPlaying && now() - lastSyncMs > SYNC_EVERY_MS) syncServer()
             mainHandler.postDelayed(this, 1000)
         }
     }
@@ -145,6 +158,7 @@ class PlaybackService : Service() {
         // the system's media controls have something to show from the start.
         publishState()
         mainHandler.post(stateTick)
+        resumeServer()
     }
 
     override fun onBind(intent: Intent?): IBinder = binder
@@ -188,6 +202,7 @@ class PlaybackService : Service() {
         engine.pause(now())
         resumeOnFocusGain = false
         publishState()
+        syncServer()
     }
 
     fun toggle() {
@@ -250,6 +265,110 @@ class PlaybackService : Service() {
         mapName = null
     }
 
+    // Audiobookshelf. Every call to the engine's server functions does
+    // network I/O, so each runs on its own short-lived thread and reports
+    // back on the main thread.
+
+    /** Sign in; [onDone] gets null or what went wrong. */
+    fun serverLogin(url: String, username: String, secret: String, onDone: (String?) -> Unit) {
+        val base = url.trim().trimEnd('/')
+        serverUrl = base
+        serverBusy = "Signing in to $base…"
+        Thread({
+            val problem = engine.serverLogin(base, username, secret)
+            if (problem == null) saveServer(base)
+            serverBusy = null
+            mainHandler.post { onDone(problem) }
+        }, "underscore-server").start()
+    }
+
+    /** Sign out and forget the saved tokens. */
+    fun serverForget() {
+        engine.serverForget()
+        prefs.edit().clear().apply()
+    }
+
+    /** Come back to the server from the last run, if there was one. */
+    private fun resumeServer() {
+        val base = prefs.getString("url", null) ?: return
+        val access = prefs.getString("access", null) ?: return
+        val refresh = prefs.getString("refresh", null)
+        serverUrl = base
+        serverBusy = "Reconnecting to $base…"
+        Thread({
+            val problem = engine.serverResume(base, access, refresh)
+            if (problem == null) saveServer(base)
+            serverBusy = null
+            if (problem != null) android.util.Log.w("underscore", "server: $problem")
+        }, "underscore-server").start()
+    }
+
+    /** Keep the tokens, which change when the access token is renewed. */
+    private fun saveServer(base: String) {
+        val creds = engine.serverCredentials ?: return
+        val access = creds.substringBefore('\n')
+        val refresh = creds.substringAfter('\n', "")
+        prefs.edit()
+            .putString("url", base)
+            .putString("access", access)
+            .putString("refresh", refresh.ifEmpty { null })
+            .apply()
+    }
+
+    /** The server's books; [onDone] gets the list, or null and a reason. */
+    fun serverBooks(onDone: (List<ServerBook>?, String?) -> Unit) {
+        serverBusy = "Listing books…"
+        Thread({
+            val json = engine.serverBooks()
+            serverBusy = null
+            val books = ArrayList<ServerBook>()
+            var problem: String? = null
+            try {
+                val o = org.json.JSONObject(json)
+                if (o.has("error")) {
+                    problem = o.getString("error")
+                } else {
+                    val arr = o.getJSONArray("books")
+                    for (i in 0 until arr.length()) {
+                        val b = arr.getJSONObject(i)
+                        books.add(ServerBook(b.getString("id"), b.getString("title"), b.getString("author"), b.getLong("durationMs")))
+                    }
+                }
+            } catch (e: Exception) {
+                problem = "unreadable answer from the server: $e"
+            }
+            mainHandler.post { if (problem == null) onDone(books, null) else onDone(null, problem) }
+        }, "underscore-server").start()
+    }
+
+    /** Download a server book into the cache and load it. [onDone] gets null or a reason. */
+    fun openServerBook(book: ServerBook, onDone: (String?) -> Unit) {
+        val cache = File(cacheDir, "library")
+        serverBusy = "Downloading ${book.title}…"
+        Thread({
+            val problem = engine.serverOpen(book.id, cache.absolutePath)
+            serverBusy = null
+            mainHandler.post {
+                if (problem == null) {
+                    speechName = book.title
+                    publishState()
+                }
+                onDone(problem)
+            }
+        }, "underscore-server").start()
+    }
+
+    /** Tell the server where the book is. Cheap when there is no server book. */
+    private fun syncServer() {
+        if (syncing || !engine.hasServer) return
+        syncing = true
+        lastSyncMs = now()
+        Thread({
+            if (engine.serverSync()) serverUrl?.let { saveServer(it) }
+            syncing = false
+        }, "underscore-sync").start()
+    }
+
     private fun load(uri: Uri, into: (Int, String?) -> Boolean): Boolean {
         val pfd = contentResolver.openFileDescriptor(uri, "r") ?: return false
         val mime = contentResolver.getType(uri)
@@ -286,6 +405,7 @@ class PlaybackService : Service() {
             appendLine("book: ${speechName ?: "none"}; music: ${musicName ?: "none"}")
             appendLine("music folder: ${musicDir?.absolutePath ?: "none"}; map: ${mapName ?: "none"}, loading $mapLoading")
             appendLine("map status: ${engine.mapStatus}")
+            appendLine("server: ${serverUrl ?: "none"}, signed in ${engine.hasServer}, busy ${serverBusy ?: "no"}")
             appendLine("session: active ${session.isActive}")
             if (state == null) {
                 appendLine("playback state: none")
@@ -482,6 +602,8 @@ class PlaybackService : Service() {
         const val SAMPLE_RATE = 48_000
         const val CHANNELS = 2
         const val BLOCK_FRAMES = 1024
+        /** How often the position goes back to the server while playing. */
+        private const val SYNC_EVERY_MS = 30_000L
         private const val CHANNEL_ID = "playback"
         private const val NOTIFICATION_ID = 1
         private const val ACTION_PLAY = "io.github.ronin11.underscore.PLAY"

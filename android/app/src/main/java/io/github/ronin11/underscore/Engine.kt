@@ -58,6 +58,25 @@ class Engine(sampleRate: Int, val channels: Int) : AutoCloseable {
     /** One line on the map for the UI. */
     val mapStatus: String get() = nativeMapStatus(h())
 
+    /**
+     * Audiobookshelf. All of these talk to the server, so call them from
+     * a background thread. Errors come back as a message; null is success.
+     */
+    fun serverLogin(url: String, username: String, secret: String): String? =
+        nativeServerLogin(h(), url, username, secret)
+    fun serverResume(url: String, access: String, refresh: String?): String? =
+        nativeServerResume(h(), url, access, refresh)
+    /** Access token, newline, refresh token. Null without a server. */
+    val serverCredentials: String? get() = nativeServerCredentials(h())
+    fun serverForget() = nativeServerForget(h())
+    val hasServer: Boolean get() = nativeHasServer(h())
+    /** JSON: `{"books":[{id,title,author,durationMs}]}` or `{"error":...}`. */
+    fun serverBooks(): String = nativeServerBooks(h())
+    /** Download a book into [cacheDir] and load it. Slow. */
+    fun serverOpen(id: String, cacheDir: String): String? = nativeServerOpen(h(), id, cacheDir)
+    /** Report the position of the loaded server book. */
+    fun serverSync(): Boolean = nativeServerSync(h())
+
     /** Fill [out] with interleaved samples; returns frames written. */
     fun render(out: FloatArray, nowMs: Long): Int = nativeRender(h(), out, nowMs)
 
@@ -101,6 +120,14 @@ class Engine(sampleRate: Int, val channels: Int) : AutoCloseable {
     private external fun nativeClearMap(handle: Long)
     private external fun nativeHasMap(handle: Long): Boolean
     private external fun nativeMapStatus(handle: Long): String
+    private external fun nativeServerLogin(handle: Long, url: String, username: String, secret: String): String?
+    private external fun nativeServerResume(handle: Long, url: String, access: String, refresh: String?): String?
+    private external fun nativeServerCredentials(handle: Long): String?
+    private external fun nativeServerForget(handle: Long)
+    private external fun nativeHasServer(handle: Long): Boolean
+    private external fun nativeServerBooks(handle: Long): String
+    private external fun nativeServerOpen(handle: Long, id: String, cacheDir: String): String?
+    private external fun nativeServerSync(handle: Long): Boolean
     private external fun nativeRender(handle: Long, out: FloatArray, nowMs: Long): Int
 
     companion object {

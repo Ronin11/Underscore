@@ -24,8 +24,9 @@ crates/decode    FileSource: symphonia decoding, resampling, channel mapping.
 crates/map       Music maps: the TOML format, validation, and the schedule that
                  resolves cues against chapter times. Data only, no I/O.
 crates/library   The Library trait (list, search, fetch, progress), LocalLibrary
-                 over folders, the per-stream Cache, and the Conductor that turns
-                 a map plus the book position into player directions.
+                 over folders, Audiobookshelf over HTTP (abs.rs), the per-stream
+                 Cache, and the Conductor that turns a map plus the book position
+                 into player directions.
 crates/android   Bridge (plain Rust over Player), follow.rs (the map worker
                  thread), and jni.rs (JNI exports).
 crates/cli       `underscore` binary. `scan` and `map check`; no playback yet.
@@ -71,7 +72,17 @@ CI runs the first three and fails on any warning. The workspace lints are
 `clippy::all` and `clippy::pedantic` at `warn`; fix the warning rather than
 widening an `allow`, unless the cast or lint is genuinely intentional and
 the `allow` is scoped to the one item. The fourth needs
-`rustup target add aarch64-linux-android` once; it does not need the NDK.
+`rustup target add aarch64-linux-android` once, and since the library crate
+gained TLS (`ring` compiles C) it needs the NDK's clang for the target:
+
+```
+NDK=/path/to/ndk/toolchains/llvm/prebuilt/linux-x86_64/bin
+CC_aarch64_linux_android=$NDK/aarch64-linux-android26-clang \
+AR_aarch64_linux_android=$NDK/llvm-ar \
+cargo check --target aarch64-linux-android -p underscore-android --release
+```
+
+Without an NDK, skip the fourth check and watch the APK workflow.
 
 The Kotlin side cannot be compiled without the Android SDK. If you have it,
 `cd android && ./gradlew assembleDebug` is the check. If you do not, read

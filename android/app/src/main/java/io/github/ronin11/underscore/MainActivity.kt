@@ -194,8 +194,13 @@ class MainActivity : AppCompatActivity() {
         val e = s.engine
         val pos = e.positionMs
         val dur = e.durationMs
+        val server = s.serverBusy ?: when {
+            s.engine.hasServer -> s.serverUrl
+            s.serverUrl != null -> "${s.serverUrl} (not signed in)"
+            else -> "none"
+        }
         files.text = "Book: ${s.speechName ?: "none"}\nMusic: ${s.musicName ?: "none"}\n" +
-            "Music folder: ${s.musicDir?.name ?: "none"}\nMap: ${s.mapName ?: "none"}"
+            "Music folder: ${s.musicDir?.name ?: "none"}\nMap: ${s.mapName ?: "none"}\nServer: $server"
         status.text = "${fmt(pos)} / ${if (dur >= 0) fmt(dur) else "?"}"
         playButton.text = if (e.isPlaying) "Pause" else "Play"
         musicButton.text = if (e.musicEnabled) "Music: on" else "Music: off"
@@ -240,6 +245,90 @@ class MainActivity : AppCompatActivity() {
             }
             .setNegativeButton("Cancel", null)
             .show()
+    }
+
+    /** Sign in to an Audiobookshelf server, or sign out of the current one. */
+    private fun serverDialog() {
+        val s = service ?: return
+        if (s.engine.hasServer) {
+            AlertDialog.Builder(this)
+                .setTitle("Audiobookshelf")
+                .setMessage("Signed in to ${s.serverUrl}")
+                .setPositiveButton("Sign out") { _, _ -> s.serverForget(); refresh() }
+                .setNegativeButton("Close", null)
+                .show()
+            return
+        }
+        val pad = (16 * resources.displayMetrics.density).toInt()
+        val url = EditText(this).apply {
+            hint = "Server address"
+            setText(s.serverUrl ?: "http://")
+            inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_URI
+        }
+        val user = EditText(this).apply {
+            hint = "Username"
+            inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD
+        }
+        val secret = EditText(this).apply {
+            hint = "Password"
+            inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD
+        }
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(pad, pad / 2, pad, 0)
+            addView(url); addView(user); addView(secret)
+        }
+        AlertDialog.Builder(this)
+            .setTitle("Audiobookshelf")
+            .setMessage("Your own server. The password is used once to sign in and is not kept.")
+            .setView(box)
+            .setPositiveButton("Sign in") { _, _ ->
+                s.serverLogin(url.text.toString(), user.text.toString(), secret.text.toString()) { problem ->
+                    Toast.makeText(this, problem ?: "Signed in", Toast.LENGTH_LONG).show()
+                    refresh()
+                }
+                refresh()
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    /** The server's books; picking one downloads and loads it. */
+    private fun serverBooks() {
+        val s = service ?: return
+        if (!s.engine.hasServer) {
+            serverDialog()
+            return
+        }
+        s.serverBooks { books, problem ->
+            if (books == null) {
+                Toast.makeText(this, problem ?: "No books", Toast.LENGTH_LONG).show()
+                return@serverBooks
+            }
+            if (books.isEmpty()) {
+                Toast.makeText(this, "The server has no books this account can see", Toast.LENGTH_LONG).show()
+                return@serverBooks
+            }
+            val items = Array(books.size) { i ->
+                val b = books[i]
+                val length = if (b.durationMs > 0) "  ${fmt(b.durationMs)}" else ""
+                if (b.author.isEmpty()) "${b.title}$length" else "${b.title}\n${b.author}$length"
+            }
+            AlertDialog.Builder(this)
+                .setTitle("Books on ${s.serverUrl}")
+                .setItems(items) { _, which ->
+                    val book = books[which]
+                    Toast.makeText(this, "Downloading ${book.title}…", Toast.LENGTH_SHORT).show()
+                    s.openServerBook(book) { problem ->
+                        Toast.makeText(this, problem ?: "Loaded ${book.title}", Toast.LENGTH_LONG).show()
+                        refresh()
+                    }
+                    refresh()
+                }
+                .setNegativeButton("Cancel", null)
+                .show()
+        }
+        refresh()
     }
 
     /** Ask what happened, then build a report and open the share sheet. */
@@ -310,6 +399,10 @@ class MainActivity : AppCompatActivity() {
         row(
             button("Pick book") { pickSpeech.launch(AUDIO_TYPES) },
             button("Pick music") { pickMusic.launch(AUDIO_TYPES) },
+        )
+        row(
+            button("Server") { serverDialog() },
+            button("Server books") { serverBooks() },
         )
 
         status = TextView(this).apply {
