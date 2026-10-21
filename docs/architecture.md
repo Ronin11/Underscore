@@ -183,7 +183,8 @@ desktop playback because that is where listening happens.
 4. **Local desktop playback.** `underscore play <book> <music>` via `cpal`.
    Mostly a developer tool for tuning the engine with real material.
 5. **Map authoring.** `underscore map`: transcript in, map out, with the
-   language model kept to scene segments and candidate picks. See
+   language model kept to scene segments and candidate picks. Where the
+   transcript is made, phone or desktop, is an open decision; see
    `docs/music-map.md`.
 6. **Podcast RSS.** Subscriptions, episode download, episodes as transition
    events.

@@ -131,12 +131,51 @@ is:
 1. **Chapter titles and the publisher's synopsis.** Audiobookshelf has
    them today. Enough for a chapter-level map.
 2. **Speech to text of the audiobook the listener owns.** A private
-   transcript of a file you own, for your own listening, is fine. It
-   should run on a desktop or the server, not the phone. The timestamps
-   come for free, which is exactly what cues need.
+   transcript of a file you own, for your own listening, is fine. The
+   timestamps come for free, which is exactly what cues need. Where it
+   runs is an open decision; see below.
 3. **A DRM-free ebook aligned to the audio.** More accurate for quoted
    songs, more work for alignment, and most ebooks are locked. Rule two
    means locked ones are never touched, so this stays optional.
+
+## Where the transcript is made: an open decision
+
+The first draft said the transcript runs on a desktop or the server, not
+the phone, because Whisper on a laptop does about ten hours of audio in
+an hour and a phone cannot keep that up. Measured against the phone that
+is still true: whisper.cpp with the tiny or base model runs a few times
+faster than real time on a flagship and throttles long before a book is
+done, and those small models mangle names, which are what a map wants.
+
+The phone has a better engine already installed. Since Android 13 the
+system speech recognizer takes audio from a file descriptor instead of
+the microphone, and since Android 14 it returns word timestamps. On a
+Pixel that runs on the Tensor chip many times faster than real time,
+with the full-size model and no bundled weights. It is not on every
+phone: reliable on Pixels and most phones with Google's speech services,
+absent on some others.
+
+That makes the transcript cheap where the listening happens, and the
+language-model step is a network call from anywhere. So there are three
+places the map tool could live, and the choice has to be made before
+the tool is written:
+
+- **In the app.** Transcribe on the device, call the model, write the
+  map next to the book. The best experience on a Pixel. Needs a model
+  key in the app, and a fallback for phones without the recognizer.
+- **In the CLI, on a desktop.** Whisper or the same recognizer's desktop
+  cousin, then the model. Works for everyone with a computer, needs the
+  book copied over, and the map copied back.
+- **On the listener's server.** Audiobookshelf already holds the book;
+  a job there could transcribe once for every device. Only helps the
+  self-hosting users, and that backend is not written yet.
+
+The likely answer is the first two sharing one Rust core: the transcript
+format, the segmenter prompt, and the resolver live in a crate, and the
+app and the CLI each supply a transcript source and a model client.
+Nothing in this choice touches the three rules: the transcript is a
+private copy of a file the listener owns, the map is still only data, and
+the mix is never involved.
 
 ## The sidecar tool
 
