@@ -69,12 +69,20 @@ class PlaybackService : Service() {
 
     var speechName: String? = null
         private set
+    /** True when the loaded book came from the Audiobookshelf server. */
+    var bookFromServer = false
+        private set
     var musicName: String? = null
         private set
     var mapName: String? = null
         private set
-    /** The folder a map plays from. Picked by the activity, scanned by the engine. */
-    var musicDir: File? = null
+    /** The listener's settings; applied to the engine here, edited by the settings screen. */
+    lateinit var settings: Settings
+        private set
+    private var settingsListener: android.content.SharedPreferences.OnSharedPreferenceChangeListener? = null
+    /** The folder a map plays from, from the settings, when it still exists. */
+    val musicDir: File?
+        get() = settings.musicDir?.let { File(it) }?.takeIf { it.isDirectory }
     /** True while a map is being loaded and its folder scanned. */
     @Volatile var mapLoading = false
         private set
@@ -145,6 +153,9 @@ class PlaybackService : Service() {
     override fun onCreate() {
         super.onCreate()
         engine = Engine(SAMPLE_RATE, CHANNELS)
+        settings = Settings(this)
+        settings.applyTo(engine)
+        settingsListener = settings.listen { settings.applyTo(engine) }
         audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
         createSession()
         createChannel()
@@ -176,6 +187,7 @@ class PlaybackService : Service() {
 
     override fun onDestroy() {
         mainHandler.removeCallbacks(stateTick)
+        settingsListener?.let { settings.unlisten(it) }
         unregisterReceiver(noisyReceiver)
         abandonFocus()
         session.isActive = false
@@ -224,10 +236,38 @@ class PlaybackService : Service() {
         publishState()
     }
 
+    /** Where chapter [index] ends: the next chapter's start, or the end of the book. */
+    fun chapterEndMs(index: Int): Long =
+        if (index + 1 < engine.chapterCount) engine.chapterStartMs(index + 1) else engine.durationMs
+
+    /**
+     * Back to the start of this chapter, or to the previous one when the
+     * book is already within a few seconds of the start. The same rule as
+     * a track button on a CD player.
+     */
+    fun previousChapter() {
+        val chapter = engine.currentChapter
+        if (chapter < 0) return
+        val intoChapter = engine.positionMs - engine.chapterStartMs(chapter)
+        val target = if (intoChapter > 3000 || chapter == 0) chapter else chapter - 1
+        engine.seekChapter(target)
+        publishState()
+    }
+
+    fun nextChapter() {
+        val chapter = engine.currentChapter
+        if (chapter < 0 || chapter + 1 >= engine.chapterCount) return
+        engine.seekChapter(chapter + 1)
+        publishState()
+    }
+
     /** Open [uri] read-only and hand the descriptor to the engine. */
     fun loadSpeech(uri: Uri, name: String?): Boolean {
         val ok = load(uri) { fd, mime -> engine.loadSpeech(fd, mime) }
-        if (ok) speechName = name
+        if (ok) {
+            speechName = name
+            bookFromServer = false
+        }
         publishState()
         return ok
     }
@@ -247,7 +287,7 @@ class PlaybackService : Service() {
     fun loadMap(toml: String, name: String?, onDone: (String?) -> Unit) {
         val dir = musicDir
         if (dir == null) {
-            onDone("Pick a music folder first")
+            onDone("Set the music folder in Settings first")
             return
         }
         val cache = File(cacheDir, "library")
@@ -351,6 +391,7 @@ class PlaybackService : Service() {
             mainHandler.post {
                 if (problem == null) {
                     speechName = book.title
+                    bookFromServer = true
                     publishState()
                 }
                 onDone(problem)
@@ -404,6 +445,7 @@ class PlaybackService : Service() {
             appendLine("engine: music ${if (engine.musicEnabled) "on" else "off"}, chapters ${engine.chapterCount}, current ${engine.currentChapter}")
             appendLine("book: ${speechName ?: "none"}; music: ${musicName ?: "none"}")
             appendLine("music folder: ${musicDir?.absolutePath ?: "none"}; map: ${mapName ?: "none"}, loading $mapLoading")
+            appendLine("settings: skip -${settings.skipBackSec}/+${settings.skipForwardSec} s, rewind ${settings.rewindOnResume}, music level ${settings.musicLevel}, keep screen on ${settings.keepScreenOn}")
             appendLine("map status: ${engine.mapStatus}")
             appendLine("server: ${serverUrl ?: "none"}, signed in ${engine.hasServer}, busy ${serverBusy ?: "no"}")
             appendLine("session: active ${session.isActive}")

@@ -1,0 +1,253 @@
+package io.github.ronin11.underscore
+
+import android.content.ComponentName
+import android.content.Context
+import android.content.Intent
+import android.content.ServiceConnection
+import android.os.Bundle
+import android.os.Handler
+import android.os.IBinder
+import android.os.Looper
+import android.text.InputType
+import android.util.TypedValue
+import android.view.Gravity
+import android.view.MenuItem
+import android.view.View
+import android.view.ViewGroup
+import android.widget.EditText
+import android.widget.LinearLayout
+import android.widget.TextView
+import android.widget.Toast
+import androidx.appcompat.app.AlertDialog
+import androidx.appcompat.app.AppCompatActivity
+import androidx.appcompat.widget.Toolbar
+import androidx.core.content.ContextCompat
+import java.util.Locale
+
+/**
+ * What every screen shares: a binding to [PlaybackService], a half-second
+ * refresh while the screen is in front, a toolbar, and the small helpers
+ * for building views in code. Screens override [refresh] and fill their
+ * own layout.
+ */
+abstract class ServiceActivity : AppCompatActivity() {
+
+    protected var service: PlaybackService? = null
+        private set
+    protected val ui = Handler(Looper.getMainLooper())
+
+    private val connection = object : ServiceConnection {
+        override fun onServiceConnected(name: ComponentName, binder: IBinder) {
+            service = (binder as PlaybackService.LocalBinder).service
+            onServiceReady()
+            refresh()
+        }
+
+        override fun onServiceDisconnected(name: ComponentName) {
+            service = null
+        }
+    }
+
+    private val tick = object : Runnable {
+        override fun run() {
+            refresh()
+            ui.postDelayed(this, 500)
+        }
+    }
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        setContentView(buildUi())
+        val intent = Intent(this, PlaybackService::class.java)
+        ContextCompat.startForegroundService(this, intent)
+        bindService(intent, connection, Context.BIND_AUTO_CREATE)
+    }
+
+    override fun onStart() {
+        super.onStart()
+        ui.post(tick)
+    }
+
+    override fun onStop() {
+        ui.removeCallbacks(tick)
+        super.onStop()
+    }
+
+    override fun onDestroy() {
+        unbindService(connection)
+        super.onDestroy()
+    }
+
+    override fun onOptionsItemSelected(item: MenuItem): Boolean {
+        if (item.itemId == android.R.id.home) {
+            finish()
+            return true
+        }
+        return super.onOptionsItemSelected(item)
+    }
+
+    /** The screen's whole layout, built once after the activity is up. */
+    protected abstract fun buildUi(): View
+
+    /** The service is bound; one-time setup that needs it goes here. */
+    protected open fun onServiceReady() {}
+
+    /** Bring the screen up to date. Runs twice a second while in front. */
+    protected abstract fun refresh()
+
+    protected fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
+
+    protected fun toast(text: String, long: Boolean = true) {
+        Toast.makeText(this, text, if (long) Toast.LENGTH_LONG else Toast.LENGTH_SHORT).show()
+    }
+
+    /** A theme color such as `androidx.appcompat.R.attr.colorAccent`. */
+    protected fun themeColor(attr: Int): Int {
+        val v = TypedValue()
+        theme.resolveAttribute(attr, v, true)
+        return if (v.resourceId != 0) ContextCompat.getColor(this, v.resourceId) else v.data
+    }
+
+    /** The app bar: dark, with the given title and a back arrow when [up]. */
+    protected fun toolbar(title: String, up: Boolean): Toolbar {
+        val bar = Toolbar(this).apply {
+            this.title = title
+            setBackgroundColor(ContextCompat.getColor(context, R.color.ink))
+            setTitleTextColor(ContextCompat.getColor(context, R.color.paper))
+            setSubtitleTextColor(ContextCompat.getColor(context, R.color.sky))
+            popupTheme = androidx.appcompat.R.style.ThemeOverlay_AppCompat_DayNight
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT,
+            )
+        }
+        setSupportActionBar(bar)
+        supportActionBar?.setDisplayHomeAsUpEnabled(up)
+        bar.navigationIcon?.setTint(ContextCompat.getColor(this, R.color.paper))
+        bar.overflowIcon?.setTint(ContextCompat.getColor(this, R.color.paper))
+        return bar
+    }
+
+    /** A bold, small heading above a group of rows. */
+    protected fun heading(text: String): TextView = TextView(this).apply {
+        this.text = text
+        setTextColor(themeColor(androidx.appcompat.R.attr.colorAccent))
+        textSize = 13f
+        setPadding(dp(16), dp(20), dp(16), dp(6))
+    }
+
+    /**
+     * One settings-style row: a title, a summary below it, and a tap action.
+     * The returned row's [Row.summary] can be updated from [refresh].
+     */
+    protected fun row(title: String, summary: String?, onClick: (() -> Unit)?): Row {
+        val titleView = TextView(this).apply {
+            text = title
+            textSize = 16f
+        }
+        val summaryView = TextView(this).apply {
+            text = summary ?: ""
+            textSize = 13f
+            alpha = 0.7f
+            visibility = if (summary == null) View.GONE else View.VISIBLE
+        }
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(16), dp(12), dp(16), dp(12))
+            addView(titleView)
+            addView(summaryView)
+            if (onClick != null) {
+                isClickable = true
+                isFocusable = true
+                setBackgroundResource(selectableBackground())
+                setOnClickListener { onClick(); refresh() }
+            }
+        }
+        return Row(box, titleView, summaryView)
+    }
+
+    protected fun selectableBackground(): Int {
+        val v = TypedValue()
+        theme.resolveAttribute(android.R.attr.selectableItemBackground, v, true)
+        return v.resourceId
+    }
+
+    class Row(val view: LinearLayout, val title: TextView, private val summaryView: TextView) {
+        var summary: String?
+            get() = summaryView.text.toString().ifEmpty { null }
+            set(v) {
+                summaryView.text = v ?: ""
+                summaryView.visibility = if (v == null) View.GONE else View.VISIBLE
+            }
+    }
+
+    /** `h:mm:ss`, or `m:ss` under an hour. */
+    protected fun fmt(ms: Long): String {
+        val total = ms.coerceAtLeast(0) / 1000
+        val h = total / 3600
+        val m = (total % 3600) / 60
+        val sec = total % 60
+        return if (h > 0) String.format(Locale.US, "%d:%02d:%02d", h, m, sec)
+        else String.format(Locale.US, "%d:%02d", m, sec)
+    }
+
+    /** `1.2x`. */
+    protected fun fmtSpeed(speed: Float): String = String.format(Locale.US, "%.1fx", speed)
+
+    /** Sign in to an Audiobookshelf server, or sign out of the current one. */
+    protected fun serverDialog() {
+        val s = service ?: return
+        if (s.engine.hasServer) {
+            AlertDialog.Builder(this)
+                .setTitle("Audiobookshelf")
+                .setMessage("Signed in to ${s.serverUrl}")
+                .setPositiveButton("Sign out") { _, _ -> s.serverForget(); refresh() }
+                .setNegativeButton("Close", null)
+                .show()
+            return
+        }
+        val pad = dp(16)
+        val url = EditText(this).apply {
+            hint = "Server address"
+            setText(s.serverUrl ?: "http://")
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI
+        }
+        val user = EditText(this).apply {
+            hint = "Username"
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD
+        }
+        val secret = EditText(this).apply {
+            hint = "Password"
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
+        }
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(pad, pad / 2, pad, 0)
+            addView(url); addView(user); addView(secret)
+        }
+        AlertDialog.Builder(this)
+            .setTitle("Audiobookshelf")
+            .setMessage("Your own server. The password is used once to sign in and is not kept.")
+            .setView(box)
+            .setPositiveButton("Sign in") { _, _ ->
+                s.serverLogin(url.text.toString(), user.text.toString(), secret.text.toString()) { problem ->
+                    toast(problem ?: "Signed in")
+                    refresh()
+                }
+                refresh()
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    /** A horizontal rule between groups. */
+    protected fun divider(): View = View(this).apply {
+        setBackgroundColor(0x22808080)
+        layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(1))
+    }
+
+    /** A centered single-line label. */
+    protected fun label(size: Float, gravityFlags: Int = Gravity.CENTER): TextView = TextView(this).apply {
+        textSize = size
+        gravity = gravityFlags
+    }
+}

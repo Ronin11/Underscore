@@ -28,6 +28,10 @@ class Engine(sampleRate: Int, val channels: Int) : AutoCloseable {
     fun extendSleepMs(byMs: Long, nowMs: Long) = nativeExtendSleepMs(h(), byMs, nowMs)
     fun sleepRemainingMs(nowMs: Long): Long = nativeSleepRemainingMs(h(), nowMs)
     fun setNoiseDb(db: Float) = nativeSetNoiseDb(h(), db)
+    /** How far the skip buttons jump. */
+    fun setSkipMs(backMs: Long, forwardMs: Long) = nativeSetSkipMs(h(), backMs, forwardMs)
+    /** Rewind a little on resume, scaled by the length of the pause. */
+    fun setRewind(enabled: Boolean) = nativeSetRewind(h(), enabled)
     val positionMs: Long get() = nativePositionMs(h())
     val durationMs: Long get() = nativeDurationMs(h())
 
@@ -107,6 +111,8 @@ class Engine(sampleRate: Int, val channels: Int) : AutoCloseable {
     private external fun nativeExtendSleepMs(handle: Long, byMs: Long, nowMs: Long)
     private external fun nativeSleepRemainingMs(handle: Long, nowMs: Long): Long
     private external fun nativeSetNoiseDb(handle: Long, db: Float)
+    private external fun nativeSetSkipMs(handle: Long, backMs: Long, forwardMs: Long)
+    private external fun nativeSetRewind(handle: Long, enabled: Boolean)
     private external fun nativePositionMs(handle: Long): Long
     private external fun nativeDurationMs(handle: Long): Long
     private external fun nativeChapterCount(handle: Long): Int

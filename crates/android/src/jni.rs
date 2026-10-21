@@ -459,6 +459,27 @@ pub extern "system" fn Java_io_github_ronin11_underscore_Engine_nativeSleepAtCha
     jbool(with(handle, false, |b| b.sleep_at_chapter_end()))
 }
 
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_io_github_ronin11_underscore_Engine_nativeSetSkipMs(
+    _env: JNIEnv,
+    _this: JObject,
+    handle: jlong,
+    back_ms: jlong,
+    forward_ms: jlong,
+) {
+    with(handle, (), |b| b.set_skips(ms(back_ms), ms(forward_ms)));
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_io_github_ronin11_underscore_Engine_nativeSetRewind(
+    _env: JNIEnv,
+    _this: JObject,
+    handle: jlong,
+    enabled: jboolean,
+) {
+    with(handle, (), |b| b.set_rewind(enabled != JNI_FALSE));
+}
+
 /// Fill `out` with interleaved samples. Returns frames written.
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_io_github_ronin11_underscore_Engine_nativeRender(

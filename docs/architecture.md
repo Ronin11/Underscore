@@ -159,7 +159,8 @@ Done:
 - An Android try-it app over a JNI bridge, published from CI as an arm64
   pre-release on every code push. Lock-screen, notification, and headset
   controls through a media session; audio focus; pause when headphones
-  come out.
+  come out. A player screen in the shape of the audiobook apps people
+  know, a settings screen that persists, and a debug screen for the rest.
 
 Not done:
 
@@ -167,7 +168,8 @@ Not done:
 - No podcast feeds, no self-hosted sources, no persistence.
 - The CLI does not play maps; only the Android app does. No server
   backends. No tool writes maps.
-- No microphone feed, no persistence, no real UI.
+- No microphone feed. Settings persist; the open book and its position
+  do not. No cover art.
 - The resampler is linear interpolation. Fine for speech; music under
   speech loses a little top end at 44.1 kHz. Replace with `rubato` when
   quality starts to matter.
@@ -179,9 +181,9 @@ The order has changed since the first draft: the Android shell came before
 desktop playback because that is where listening happens.
 
 1. **Android try-it build.** Done. See `docs/android.md`.
-2. **Android, usable daily.** Chapters, maps, and lock-screen controls
-   are in. Next: remembered position and files, microphone noise feed, a
-   music queue. Then a UI.
+2. **Android, usable daily.** Chapters, maps, lock-screen controls, and
+   the player, settings, and debug screens are in. Next: remembered
+   position and files, microphone noise feed, a music queue, cover art.
 3. **Library layer and map playback.** The trait, local folders, the
    cache, the conductor, M4B chapters, and the Android app following a
    map are in. Next: Audiobookshelf, OpenSubsonic, and Jellyfin behind

@@ -120,6 +120,11 @@ impl Player {
         &self.transport
     }
 
+    /// The transport, mutably: retune skips, rewind, speed limits.
+    pub fn transport_mut(&mut self) -> &mut Transport {
+        &mut self.transport
+    }
+
     /// Automatic levelling, for tuning.
     pub fn auto_mut(&mut self) -> &mut AutoLevel {
         &mut self.auto

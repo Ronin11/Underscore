@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- The launcher icon's palette: a dark slate and a soft blue. -->
+    <color name="ink">#1E1E2E</color>
+    <color name="sky">#89B4FA</color>
+    <color name="paper">#F5E0DC</color>
+</resources>

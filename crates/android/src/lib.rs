@@ -22,7 +22,7 @@ use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use underscore_core::{LayerId, Player, PlayerConfig, SleepTimer, Source};
+use underscore_core::{LayerId, Player, PlayerConfig, RewindPolicy, SleepTimer, Source};
 use underscore_decode::{Chapter, FileSource, MediaSource, probe, probe_path};
 use underscore_library::{Audiobookshelf, Cache, Credentials, ItemId, LocalLibrary, Role};
 use underscore_map::Map;
@@ -486,6 +486,22 @@ impl Bridge {
     /// Report room noise in dBFS.
     pub fn set_noise_db(&mut self, db: f32) {
         self.player.set_ambient_noise_db(db);
+    }
+
+    /// How far the skip buttons jump.
+    pub fn set_skips(&mut self, back: Duration, forward: Duration) {
+        let cfg = self.player.transport_mut().config_mut();
+        cfg.skip_back = back;
+        cfg.skip_forward = forward;
+    }
+
+    /// Rewind a little on resume, scaled by the length of the pause, or not.
+    pub fn set_rewind(&mut self, enabled: bool) {
+        self.player.transport_mut().config_mut().rewind = if enabled {
+            RewindPolicy::default()
+        } else {
+            RewindPolicy::none()
+        };
     }
 
     /// Book position.

@@ -11,22 +11,37 @@ A Kotlin shell over the Rust engine. The files that matter:
   read-only through the content resolver and the descriptor is detached and
   handed to Rust, which owns it from then on. It also owns the media
   session, audio focus, and the notification; transport goes through it.
-- `MainActivity.kt` binds to the service and builds its controls in code:
-  file pickers, scrub bar, transport, speed, chapters, map, music button
-  and level, sleep timers. No layout XML, so nothing to keep in sync.
-- `BugReport.kt` builds the text behind the "Report a bug" button, and
-  `UnderscoreApp.kt` saves the stack trace of a crash for it.
+- `ServiceActivity.kt` is what every screen shares: the binding to the
+  service, a half-second refresh while in front, the app bar, and the
+  helpers that build rows and dialogs in code. No layout XML, so nothing
+  to keep in sync.
+- `MainActivity.kt` is the player: the book and chapter, a scrub bar
+  across the current chapter with time left, previous and next chapter
+  around the skip and play buttons, and a tool bar along the bottom for
+  speed, sleep, chapters, and music. The app bar's menu holds the library
+  (a file, the server's books, the server sign-in) and the way to the
+  other two screens.
+- `SettingsActivity.kt` edits `Settings.kt`, one preferences file the
+  service watches and pushes into the engine: skip lengths, rewind on
+  resume, keep the screen on, the music level, the music folder maps play
+  from, and the Audiobookshelf sign-in.
+- `DebugActivity.kt` holds what belongs on neither: a music track played
+  by hand under the book, a fake room-noise level for the auto-level, the
+  live engine state, and the "Report a bug" button.
+- `BugReport.kt` builds the report text, and `UnderscoreApp.kt` saves
+  the stack trace of a crash for it.
 
-The app has no state of its own: picked files and folders are not
-remembered across launches, and there is no library view yet.
+Settings persist; the picked book, map, and position do not yet, and
+there is no library view.
 
 ## Music maps
 
-Pick a music folder, then pick a map (`docs/music-map.md`). The folder
-is a document-tree pick that the activity turns into a path on device
-storage, which is why the app asks for the audio permission: the engine
-scans the folder by path, probing every audio file for tags. The scan
-runs on its own thread and the status line says when it is done and how
+Set the music folder in Settings, then load a map from the player's
+Music menu (`docs/music-map.md`). The folder is a document-tree pick
+that the settings screen turns into a path on device storage, which is
+why the app asks for the audio permission: the engine scans the folder
+by path, probing every audio file for tags. The scan runs on its own
+thread and the app bar says when it is done; the Music menu shows how
 many cues found a track.
 
 From then on the engine asks the conductor where the book is on every
@@ -36,16 +51,17 @@ lock is free, then hands it to the music layer with one crossfade. A
 seek that lands in another cue before the worker is done makes the
 earlier job stale; it is dropped, not applied. A map that places cues by
 chapter waits until a book with chapter marks is loaded, and the status
-line says so. "Clear map" fades the music out and forgets the map; a
-music file picked by hand still plays underneath whatever the map says,
-until the next cue replaces it.
+line says so. "Clear the map" fades the music out and forgets the map;
+a track picked by hand on the Debug screen still plays underneath
+whatever the map says, until the next cue replaces it.
 
 Folders on the Downloads provider or a cloud provider have no path and
 cannot be scanned; pick one on the device or an SD card.
 
 ## Audiobookshelf
 
-"Server" asks for the address, username, and password of an
+"Audiobookshelf server" under the library menu, or the Server row in
+Settings, asks for the address, username, and password of an
 Audiobookshelf server and signs in; the tokens are kept in the app's
 private preferences and the password is not. "Server books" lists every
 book the account can see. Picking one downloads its file into the app's
@@ -115,7 +131,8 @@ without going through the browser.
 
 ## Debugging
 
-The quickest way is the "Report a bug" button at the bottom of the app.
+The quickest way is the "Report a bug" button on the Debug screen, under
+the app bar's menu.
 It writes one text file with the build and commit, the device and Android
 version, whether notifications are allowed and which ones are posted (and
 whether the system saw them as media notifications), the audio outputs,
@@ -124,7 +141,7 @@ crash if there was one, and this app's own recent logcat lines. The share
 sheet then opens; nothing leaves the phone until a target is picked. Share
 it to wherever gets it to a computer and paste it into the chat. The
 report has no audio and no file contents in it. The build and commit it
-came from are also shown under the button.
+came from are also shown under the button and in Settings.
 
 `adb logcat -s AndroidRuntime underscore` shows crashes. A JNI name
 mismatch shows as `UnsatisfiedLinkError` on first use of that function;
@@ -134,13 +151,14 @@ or a URI the app has no read grant for.
 
 ## What to add next, in rough order
 
-1. Remember the last book, music folder, map, and position across
-   launches, with a persisted URI grant for the map.
+1. Remember the last book, map, and position across launches, with a
+   persisted URI grant for the map. Settings and the music folder
+   already persist.
 2. Keep the music folder's index between map loads instead of rescanning.
 3. Microphone level for noise compensation (`RECORD_AUDIO`, a short RMS
    window on a low-priority thread, `Engine.setNoiseDb`).
 4. A music queue: a folder or playlist, crossfaded track to track.
-5. A real UI.
+5. Cover art, from the server or the file's tags, on the player.
 
 Chapters are in: the bridge reads M4B chapter marks when a book loads,
 the activity shows the current chapter and lists them in a dialog that

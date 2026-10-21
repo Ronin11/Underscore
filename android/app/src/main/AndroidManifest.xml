@@ -31,6 +31,18 @@
             </intent-filter>
         </activity>
 
+        <activity
+            android:name=".SettingsActivity"
+            android:exported="false"
+            android:label="Settings"
+            android:parentActivityName=".MainActivity" />
+
+        <activity
+            android:name=".DebugActivity"
+            android:exported="false"
+            android:label="Debug"
+            android:parentActivityName=".MainActivity" />
+
         <service
             android:name=".PlaybackService"
             android:exported="false"
