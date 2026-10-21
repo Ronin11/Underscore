@@ -5,6 +5,15 @@ plugins {
     id("org.jetbrains.kotlin.android")
 }
 
+// Stamped into BuildConfig so a bug report says which build it came from.
+// CI sets both; a local build gets the short hash and "local".
+val commit: String = System.getenv("GITHUB_SHA")?.take(7) ?: runCatching {
+    val git = ProcessBuilder("git", "rev-parse", "--short", "HEAD")
+        .directory(rootDir).redirectErrorStream(true).start()
+    git.inputStream.bufferedReader().readText().trim().takeIf { git.waitFor() == 0 }
+}.getOrNull().orEmpty().ifEmpty { "unknown" }
+val buildNumber: String = System.getenv("GITHUB_RUN_NUMBER")?.let { "apk-$it" } ?: "local"
+
 android {
     namespace = "io.github.ronin11.underscore"
     compileSdk = 35
@@ -19,6 +28,12 @@ android {
             // The Rust library is built for these by cargo-ndk in CI.
             abiFilters += listOf("arm64-v8a")
         }
+        buildConfigField("String", "COMMIT", "\"$commit\"")
+        buildConfigField("String", "BUILD", "\"$buildNumber\"")
+    }
+
+    buildFeatures {
+        buildConfig = true
     }
 
     buildTypes {

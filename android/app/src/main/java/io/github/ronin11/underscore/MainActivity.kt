@@ -19,6 +19,7 @@ import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
 import android.widget.Button
+import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.SeekBar
@@ -241,6 +242,34 @@ class MainActivity : AppCompatActivity() {
             .show()
     }
 
+    /** Ask what happened, then build a report and open the share sheet. */
+    private fun reportBug() {
+        val pad = (16 * resources.displayMetrics.density).toInt()
+        val note = EditText(this).apply {
+            hint = "What happened? What did you expect?"
+            minLines = 3
+        }
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(pad, pad / 2, pad, 0)
+            addView(note)
+        }
+        AlertDialog.Builder(this)
+            .setTitle("Report a bug")
+            .setMessage("Device, build, playback state, and this app's log lines go into a text file. Nothing is sent until you pick where.")
+            .setView(box)
+            .setPositiveButton("Share") { _, _ ->
+                try {
+                    val file = BugReport.share(this, service, note.text.toString())
+                    Toast.makeText(this, "Report saved as ${file.name}", Toast.LENGTH_SHORT).show()
+                } catch (e: Exception) {
+                    Toast.makeText(this, "Could not build the report: $e", Toast.LENGTH_LONG).show()
+                }
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
     private fun fmt(ms: Long): String {
         val total = ms / 1000
         val h = total / 3600
@@ -359,6 +388,18 @@ class MainActivity : AppCompatActivity() {
             button("+10 m") { service?.let { it.engine.extendSleepMs(10 * 60_000L, it.now()) } },
             button("Off") { service?.let { it.engine.setSleepMs(0, it.now()) } },
         )
+
+        root.addView(
+            button("Report a bug") { reportBug() },
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT,
+            ).apply { topMargin = pad },
+        )
+        root.addView(TextView(this).apply {
+            text = "Build ${BuildConfig.BUILD}, ${BuildConfig.COMMIT}"
+            gravity = Gravity.CENTER
+            textSize = 12f
+        })
 
         return ScrollView(this).apply { addView(root) }
     }

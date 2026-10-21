@@ -62,6 +62,9 @@ class PlaybackService : Service() {
     private var focusRequest: AudioFocusRequest? = null
     /** Playback was paused by a transient focus loss and should resume. */
     private var resumeOnFocusGain = false
+    /** What the last focus request and focus change said, for bug reports. */
+    private var lastFocusResult: String = "never requested"
+    private var lastFocusChange: String = "none"
     private val mainHandler = Handler(Looper.getMainLooper())
 
     var speechName: String? = null
@@ -93,6 +96,7 @@ class PlaybackService : Service() {
     }
 
     private val focusListener = AudioManager.OnAudioFocusChangeListener { change ->
+        lastFocusChange = "$change at ${now()}"
         when (change) {
             AudioManager.AUDIOFOCUS_LOSS -> {
                 resumeOnFocusGain = false
@@ -137,6 +141,9 @@ class PlaybackService : Service() {
             this, noisyReceiver, IntentFilter(AudioManager.ACTION_AUDIO_BECOMING_NOISY),
             ContextCompat.RECEIVER_NOT_EXPORTED,
         )
+        // Give the session a state and metadata before anything is loaded, so
+        // the system's media controls have something to show from the start.
+        publishState()
         mainHandler.post(stateTick)
     }
 
@@ -263,7 +270,42 @@ class PlaybackService : Service() {
             .setOnAudioFocusChangeListener(focusListener, mainHandler)
             .build()
             .also { focusRequest = it }
-        return audioManager.requestAudioFocus(request) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
+        val result = audioManager.requestAudioFocus(request)
+        lastFocusResult = "$result at ${now()}"
+        return result == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
+    }
+
+    /** The service's own view of things, for a bug report. */
+    fun describe(): String {
+        val state = session.controller.playbackState
+        val meta = session.controller.metadata
+        val t = track
+        return buildString {
+            appendLine("engine: playing ${engine.isPlaying}, position ${engine.positionMs} ms of ${engine.durationMs} ms, speed ${engine.speed}")
+            appendLine("engine: music ${if (engine.musicEnabled) "on" else "off"}, chapters ${engine.chapterCount}, current ${engine.currentChapter}")
+            appendLine("book: ${speechName ?: "none"}; music: ${musicName ?: "none"}")
+            appendLine("music folder: ${musicDir?.absolutePath ?: "none"}; map: ${mapName ?: "none"}, loading $mapLoading")
+            appendLine("map status: ${engine.mapStatus}")
+            appendLine("session: active ${session.isActive}")
+            if (state == null) {
+                appendLine("playback state: none")
+            } else {
+                appendLine("playback state: ${state.state}, position ${state.position}, speed ${state.playbackSpeed}, actions 0x${java.lang.Long.toHexString(state.actions)}")
+            }
+            if (meta == null) {
+                appendLine("metadata: none")
+            } else {
+                appendLine(
+                    "metadata: title ${meta.getString(MediaMetadataCompat.METADATA_KEY_TITLE)}, " +
+                        "artist ${meta.getString(MediaMetadataCompat.METADATA_KEY_ARTIST)}, " +
+                        "duration ${meta.getLong(MediaMetadataCompat.METADATA_KEY_DURATION)}",
+                )
+            }
+            appendLine("last published: playing $shownPlaying, title $shownTitle, chapter $shownChapter, duration $shownDurationMs")
+            appendLine("audio focus: request $lastFocusResult; change $lastFocusChange; resume on gain $resumeOnFocusGain")
+            appendLine("track: ${if (t == null) "none" else "state ${t.playState}, rate ${t.sampleRate}, underruns ${t.underrunCount}"}")
+            append("render thread: ${renderThread?.isAlive ?: false}, running $running")
+        }
     }
 
     private fun abandonFocus() {

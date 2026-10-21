@@ -1,6 +1,6 @@
 # The Android app
 
-A Kotlin shell over the Rust engine. Three files:
+A Kotlin shell over the Rust engine. The files that matter:
 
 - `Engine.kt` wraps the JNI exports from `crates/android/src/jni.rs`. One
   instance owns one native player. Times are milliseconds on
@@ -14,6 +14,8 @@ A Kotlin shell over the Rust engine. Three files:
 - `MainActivity.kt` binds to the service and builds its controls in code:
   file pickers, scrub bar, transport, speed, chapters, map, music button
   and level, sleep timers. No layout XML, so nothing to keep in sync.
+- `BugReport.kt` builds the text behind the "Report a bug" button, and
+  `UnderscoreApp.kt` saves the stack trace of a crash for it.
 
 The app has no state of its own: picked files and folders are not
 remembered across launches, and there is no library view yet.
@@ -84,6 +86,17 @@ Rust side in release even for a debug APK: WSOLA in a debug build is too
 slow to keep up on a phone.
 
 ## Debugging
+
+The quickest way is the "Report a bug" button at the bottom of the app.
+It writes one text file with the build and commit, the device and Android
+version, whether notifications are allowed and which ones are posted (and
+whether the system saw them as media notifications), the audio outputs,
+the service's view of the session, the engine's transport state, the last
+crash if there was one, and this app's own recent logcat lines. The share
+sheet then opens; nothing leaves the phone until a target is picked. Share
+it to wherever gets it to a computer and paste it into the chat. The
+report has no audio and no file contents in it. The build and commit it
+came from are also shown under the button.
 
 `adb logcat -s AndroidRuntime underscore` shows crashes. A JNI name
 mismatch shows as `UnsatisfiedLinkError` on first use of that function;

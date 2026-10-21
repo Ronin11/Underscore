@@ -11,6 +11,7 @@
         android:maxSdkVersion="32" />
 
     <application
+        android:name=".UnderscoreApp"
         android:allowBackup="true"
         android:icon="@drawable/ic_launcher"
         android:label="@string/app_name"
@@ -31,5 +32,16 @@
             android:name=".PlaybackService"
             android:exported="false"
             android:foregroundServiceType="mediaPlayback" />
+
+        <!-- Hands a saved bug report to whatever app the user shares it with. -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="io.github.ronin11.underscore.files"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
     </application>
 </manifest>
