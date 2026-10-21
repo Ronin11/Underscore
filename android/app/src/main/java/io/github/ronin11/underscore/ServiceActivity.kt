@@ -22,6 +22,9 @@ import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.widget.Toolbar
 import androidx.core.content.ContextCompat
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
 import java.util.Locale
 
 /**
@@ -34,6 +37,7 @@ abstract class ServiceActivity : AppCompatActivity() {
 
     protected var service: PlaybackService? = null
         private set
+    private var appBar: Toolbar? = null
     protected val ui = Handler(Looper.getMainLooper())
 
     private val connection = object : ServiceConnection {
@@ -58,6 +62,7 @@ abstract class ServiceActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(buildUi())
+        fitSystemBars()
         val intent = Intent(this, PlaybackService::class.java)
         ContextCompat.startForegroundService(this, intent)
         bindService(intent, connection, Context.BIND_AUTO_CREATE)
@@ -84,6 +89,25 @@ abstract class ServiceActivity : AppCompatActivity() {
             return true
         }
         return super.onOptionsItemSelected(item)
+    }
+
+    /**
+     * Android 15 draws the app under the status and navigation bars. Push
+     * the app bar's content down by the status bar's height, keeping its
+     * dark background behind the status bar's light icons, and keep the
+     * bottom of the screen above the navigation bar.
+     */
+    private fun fitSystemBars() {
+        val content = findViewById<View>(android.R.id.content)
+        WindowCompat.getInsetsController(window, content).isAppearanceLightStatusBars = false
+        ViewCompat.setOnApplyWindowInsetsListener(content) { v, insets ->
+            val bars = insets.getInsets(
+                WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout(),
+            )
+            v.setPadding(bars.left, 0, bars.right, bars.bottom)
+            appBar?.setPadding(0, bars.top, 0, 0)
+            WindowInsetsCompat.CONSUMED
+        }
     }
 
     /** The screen's whole layout, built once after the activity is up. */
@@ -121,6 +145,7 @@ abstract class ServiceActivity : AppCompatActivity() {
             )
         }
         setSupportActionBar(bar)
+        appBar = bar
         supportActionBar?.setDisplayHomeAsUpEnabled(up)
         bar.navigationIcon?.setTint(ContextCompat.getColor(this, R.color.paper))
         bar.overflowIcon?.setTint(ContextCompat.getColor(this, R.color.paper))
