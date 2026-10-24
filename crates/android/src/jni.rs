@@ -626,6 +626,57 @@ pub extern "system" fn Java_io_github_ronin11_underscore_Engine_nativeHasServer(
     jbool(with(handle, false, |b| b.server().is_some()))
 }
 
+/// Begin a single sign-on. Answers `{"url": "..."}`, the address to open
+/// in the browser, or `{"error": "..."}`.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_io_github_ronin11_underscore_Engine_nativeServerOpenIdStart(
+    mut env: JNIEnv,
+    _this: JObject,
+    handle: jlong,
+    url: JString,
+) -> jstring {
+    let answer = |env: &JNIEnv, v: serde_json::Value| jstr(env, &v.to_string());
+    let Some(url) = string(&mut env, &url) else {
+        return answer(
+            &env,
+            serde_json::json!({ "error": "server address is needed" }),
+        );
+    };
+    match Bridge::openid_start(&url) {
+        Ok(start) => {
+            let authorize = start.authorize_url.clone();
+            with(handle, (), |b| b.set_openid(Some(start)));
+            answer(&env, serde_json::json!({ "url": authorize }))
+        }
+        Err(e) => answer(&env, serde_json::json!({ "error": e })),
+    }
+}
+
+/// Finish a single sign-on with the `code` and `state` from the address
+/// the browser came back to. Null on success, otherwise what went wrong.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_io_github_ronin11_underscore_Engine_nativeServerOpenIdFinish(
+    mut env: JNIEnv,
+    _this: JObject,
+    handle: jlong,
+    code: JString,
+    state: JString,
+) -> jstring {
+    let (Some(code), Some(state)) = (string(&mut env, &code), string(&mut env, &state)) else {
+        return jstr(&env, "the sign-in came back without a code");
+    };
+    let Some(start) = with(handle, None, Bridge::take_openid) else {
+        return jstr(&env, "no sign-in was waiting; start it again");
+    };
+    match Bridge::openid_finish(&start, &code, &state) {
+        Ok(server) => {
+            with(handle, (), |b| b.set_server(Some(server)));
+            std::ptr::null_mut()
+        }
+        Err(e) => jstr(&env, &e),
+    }
+}
+
 // The music server. Like Audiobookshelf, every call that talks to it does
 // so with the lock released, from a Kotlin background thread.
 

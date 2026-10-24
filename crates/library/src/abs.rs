@@ -11,6 +11,14 @@
 //! many files are listed, and `fetch` says why they cannot be played yet.
 //! Podcasts are not listed yet.
 //!
+//! Signing in works two ways. A local account takes a username and a
+//! password. An account that lives in the server's single sign-on
+//! (`OpenID`, such as Authentik) goes through the browser: [`OpenIdStart`]
+//! holds the half-done sign-in while the browser is out, and
+//! [`Audiobookshelf::openid_finish`] trades what the browser brings back
+//! for tokens. That is the server's own mobile flow, with PKCE, so the
+//! password never passes through this app at all.
+//!
 //! Every call here does network I/O. Run it off the audio thread.
 
 use std::collections::HashMap;
@@ -19,6 +27,8 @@ use std::path::PathBuf;
 use std::sync::{Mutex, RwLock};
 use std::time::Duration;
 
+use base64::Engine as _;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use serde::{Deserialize, Serialize};
 use ureq::Agent;
 use ureq::http::Response;
@@ -36,6 +46,23 @@ pub struct Credentials {
     /// Used to get a new access token when the old one is refused.
     #[serde(default)]
     pub refresh: Option<String>,
+}
+
+/// A single sign-on in progress: the browser has been sent to
+/// [`OpenIdStart::authorize_url`] and will come back to
+/// [`OpenIdStart::redirect_uri`] with a `code` and a `state`.
+#[derive(Debug, Clone)]
+pub struct OpenIdStart {
+    /// Open this in the browser.
+    pub authorize_url: String,
+    /// The address the browser returns to. The app must answer it.
+    pub redirect_uri: String,
+    base: String,
+    state: String,
+    verifier: String,
+    /// The server's session for this sign-in. It ties the browser's
+    /// trip to the exchange that finishes it.
+    cookie: String,
 }
 
 /// One Audiobookshelf server, signed in.
@@ -97,6 +124,129 @@ impl Audiobookshelf {
             ));
         }
         let login: LoginResponse = read_json(&mut resp, "POST /login")?;
+        *this.lock_auth() = login.user.credentials()?;
+        Ok(this)
+    }
+
+    /// Begin a single sign-on. Tries each of `redirect_uris` in turn and
+    /// keeps the first the server allows; servers allow
+    /// `audiobookshelf://oauth` unless told otherwise.
+    ///
+    /// # Errors
+    /// The server could not be reached, has no single sign-on, or allows
+    /// none of the addresses.
+    pub fn openid_start(base: &str, redirect_uris: &[&str]) -> Result<OpenIdStart, Error> {
+        let base = base.trim_end_matches('/').to_string();
+        let agent: Agent = Agent::config_builder()
+            .http_status_as_error(false)
+            .max_redirects(0)
+            .max_redirects_will_error(false)
+            .user_agent("underscore")
+            .timeout_connect(Some(Duration::from_secs(10)))
+            .timeout_recv_response(Some(Duration::from_secs(30)))
+            .build()
+            .into();
+        let mut refused = Vec::new();
+        for redirect in redirect_uris {
+            let verifier = random_token(32)?;
+            let state = random_token(16)?;
+            let mut resp = agent
+                .get(format!("{base}/auth/openid"))
+                .query("code_challenge", challenge(&verifier))
+                .query("code_challenge_method", "S256")
+                .query("redirect_uri", redirect)
+                .query("client_id", "Audiobookshelf-App")
+                .query("response_type", "code")
+                .query("state", &state)
+                .call()?;
+            let status = resp.status().as_u16();
+            if status == 400 {
+                let why = resp.body_mut().read_to_string().unwrap_or_default();
+                if why.contains("redirect_uri") {
+                    refused.push(*redirect);
+                    continue;
+                }
+                return Err(Error::Backend(format!(
+                    "Audiobookshelf single sign-on: {why}"
+                )));
+            }
+            let location = resp
+                .headers()
+                .get("location")
+                .and_then(|v| v.to_str().ok())
+                .filter(|_| (300..400).contains(&status))
+                .ok_or_else(|| {
+                    Error::Backend(format!(
+                        "Audiobookshelf single sign-on: HTTP {status}; is OpenID turned on?"
+                    ))
+                })?
+                .to_string();
+            let cookie = resp
+                .headers()
+                .get_all("set-cookie")
+                .iter()
+                .filter_map(|v| v.to_str().ok())
+                .filter_map(|v| v.split(';').next())
+                .collect::<Vec<_>>()
+                .join("; ");
+            return Ok(OpenIdStart {
+                authorize_url: location,
+                redirect_uri: (*redirect).to_string(),
+                base,
+                state,
+                verifier,
+                cookie,
+            });
+        }
+        Err(Error::Backend(format!(
+            "Audiobookshelf allows none of {}; add one under Settings, Authentication, \
+             allowed mobile redirect URIs",
+            refused.join(", ")
+        )))
+    }
+
+    /// Finish a single sign-on with the `code` and `state` the browser
+    /// came back with.
+    ///
+    /// # Errors
+    /// The answer is not for this sign-in, or the server refused it.
+    pub fn openid_finish(
+        name: impl Into<String>,
+        start: &OpenIdStart,
+        code: &str,
+        state: &str,
+    ) -> Result<Self, Error> {
+        if state != start.state {
+            return Err(Error::Backend(
+                "the sign-in that came back is not the one this app started".into(),
+            ));
+        }
+        let this = Self::with_credentials(
+            name,
+            &start.base,
+            Credentials {
+                access: String::new(),
+                refresh: None,
+            },
+        );
+        let mut resp = this
+            .agent
+            .get(this.url("/auth/openid/callback"))
+            .query("state", state)
+            .query("code", code)
+            .query("code_verifier", &start.verifier)
+            .header("cookie", &start.cookie)
+            .header("x-return-tokens", "true")
+            .call()?;
+        let status = resp.status().as_u16();
+        if status != 200 {
+            let why = resp.body_mut().read_to_string().unwrap_or_default();
+            return Err(Error::Backend(format!(
+                "Audiobookshelf refused the sign-in: HTTP {status} {}",
+                why.chars().take(200).collect::<String>()
+            )));
+        }
+        let login: LoginResponse = read_json(&mut resp, "GET /auth/openid/callback")?;
         *this.lock_auth() = login.user.credentials()?;
         Ok(this)
     }
@@ -390,6 +540,24 @@ impl From<ureq::Error> for Error {
     fn from(e: ureq::Error) -> Self {
         Self::Backend(format!("Audiobookshelf: {e}"))
     }
+}
+
+/// `bytes` of randomness as unpadded base64url: a PKCE verifier or a state.
+fn random_token(bytes: usize) -> Result<String, Error> {
+    use ring::rand::SecureRandom;
+    let mut buf = vec![0u8; bytes];
+    ring::rand::SystemRandom::new()
+        .fill(&mut buf)
+        .map_err(|_| Error::Backend("no randomness for the sign-in".into()))?;
+    Ok(URL_SAFE_NO_PAD.encode(buf))
+}
+
+/// The PKCE challenge for a verifier: base64url of its SHA-256.
+fn challenge(verifier: &str) -> String {
+    URL_SAFE_NO_PAD.encode(ring::digest::digest(
+        &ring::digest::SHA256,
+        verifier.as_bytes(),
+    ))
 }
 
 /// Parse a JSON body, or say which call failed and how.
@@ -857,5 +1025,129 @@ mod tests {
         let (base, _) = serve(|_| json(401, serde_json::json!({ "error": "Invalid" })));
         let err = Audiobookshelf::login("abs", &base, "nate", "wrong").unwrap_err();
         assert!(err.to_string().contains("username or password"), "{err}");
+    }
+
+    /// A fake server that writes whole raw responses, for the sign-in
+    /// tests that need redirects and cookies. The handler sees the request
+    /// target and the headers, lowercased.
+    fn serve_raw(handler: impl Fn(&str, &str) -> String + Send + Sync + 'static) -> String {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { break };
+                let mut reader = BufReader::new(stream.try_clone().unwrap());
+                let mut line = String::new();
+                if reader.read_line(&mut line).unwrap_or(0) == 0 {
+                    continue;
+                }
+                let target = line.split_whitespace().nth(1).unwrap_or("").to_string();
+                let mut headers = String::new();
+                loop {
+                    let mut h = String::new();
+                    reader.read_line(&mut h).unwrap();
+                    if h.trim_end().is_empty() {
+                        break;
+                    }
+                    headers.push_str(&h.to_ascii_lowercase());
+                }
+                stream
+                    .write_all(handler(&target, &headers).as_bytes())
+                    .unwrap();
+            }
+        });
+        base
+    }
+
+    fn query<'a>(target: &'a str, key: &str) -> Option<&'a str> {
+        target
+            .split_once('?')?
+            .1
+            .split('&')
+            .find_map(|kv| kv.strip_prefix(key)?.strip_prefix('='))
+    }
+
+    fn raw(status: &str, extra: &str, body: &str) -> String {
+        format!(
+            "HTTP/1.1 {status}\r\n{extra}Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        )
+    }
+
+    /// The server's side of the mobile flow: refuse our own address,
+    /// allow the stock one, remember the challenge, and only hand out
+    /// tokens to the verifier that matches it, with the session cookie.
+    #[test]
+    fn single_sign_on_falls_back_to_the_stock_address_and_checks_pkce() {
+        let challenge_seen = Arc::new(std::sync::Mutex::new(String::new()));
+        let seen = Arc::clone(&challenge_seen);
+        let base = serve_raw(move |target, headers| {
+            if target.starts_with("/auth/openid?") {
+                if query(target, "redirect_uri") == Some("underscore%3A%2F%2Foauth") {
+                    return raw("400 Bad Request", "", "Invalid redirect_uri");
+                }
+                assert_eq!(query(target, "code_challenge_method"), Some("S256"));
+                *seen.lock().unwrap() = query(target, "code_challenge").unwrap().to_string();
+                return raw(
+                    "302 Found",
+                    "Location: https://sso.example/authorize?x=1\r\n\
+                     Set-Cookie: auth_method=openid-mobile; Path=/; HttpOnly\r\n\
+                     Set-Cookie: connect.sid=abc123; Path=/; HttpOnly\r\n",
+                    "",
+                );
+            }
+            if target.starts_with("/auth/openid/callback?") {
+                assert!(
+                    headers.contains("cookie: auth_method=openid-mobile; connect.sid=abc123"),
+                    "{headers}"
+                );
+                let verifier = query(target, "code_verifier").unwrap();
+                if challenge(verifier) != *seen.lock().unwrap()
+                    || query(target, "code") != Some("c0de")
+                {
+                    return raw("401 Unauthorized", "", "Unauthorized");
+                }
+                let body = r#"{"user":{"accessToken":"acc","refreshToken":"ref"}}"#;
+                return raw("200 OK", "Content-Type: application/json\r\n", body);
+            }
+            raw("404 Not Found", "", "")
+        });
+        let start =
+            Audiobookshelf::openid_start(&base, &["underscore://oauth", "audiobookshelf://oauth"])
+                .unwrap();
+        assert_eq!(start.redirect_uri, "audiobookshelf://oauth");
+        assert_eq!(start.authorize_url, "https://sso.example/authorize?x=1");
+
+        let wrong = Audiobookshelf::openid_finish("abs", &start, "c0de", "someone else's state");
+        assert!(
+            wrong.is_err(),
+            "a state from another sign-in is refused before any request"
+        );
+
+        let state = start.state.clone();
+        let abs = Audiobookshelf::openid_finish("abs", &start, "c0de", &state).unwrap();
+        assert_eq!(
+            abs.credentials(),
+            Credentials {
+                access: "acc".into(),
+                refresh: Some("ref".into())
+            }
+        );
+    }
+
+    #[test]
+    fn single_sign_on_says_which_addresses_were_refused() {
+        let base = serve_raw(|_, _| raw("400 Bad Request", "", "Invalid redirect_uri"));
+        let err = Audiobookshelf::openid_start(&base, &["underscore://oauth"]).unwrap_err();
+        assert!(err.to_string().contains("underscore://oauth"), "{err}");
+    }
+
+    #[test]
+    fn pkce_challenge_matches_the_rfc_example() {
+        // RFC 7636, appendix B.
+        assert_eq!(
+            challenge("dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"),
+            "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM"
+        );
     }
 }

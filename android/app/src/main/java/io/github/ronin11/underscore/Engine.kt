@@ -82,6 +82,10 @@ class Engine(sampleRate: Int, val channels: Int) : AutoCloseable {
     val serverCredentials: String? get() = nativeServerCredentials(h())
     fun serverForget() = nativeServerForget(h())
     val hasServer: Boolean get() = nativeHasServer(h())
+    /** Begin a single sign-on. JSON: `{"url": ...}` to open in the browser, or `{"error": ...}`. */
+    fun serverOpenIdStart(url: String): String = nativeServerOpenIdStart(h(), url)
+    /** Finish it with the `code` and `state` the browser came back with. */
+    fun serverOpenIdFinish(code: String, state: String): String? = nativeServerOpenIdFinish(h(), code, state)
     /** JSON: `{"books":[{id,title,author,durationMs}]}` or `{"error":...}`. */
     fun serverBooks(): String = nativeServerBooks(h())
     /** Download a book into [cacheDir] and load it. Slow. */
@@ -159,6 +163,8 @@ class Engine(sampleRate: Int, val channels: Int) : AutoCloseable {
     private external fun nativeServerCredentials(handle: Long): String?
     private external fun nativeServerForget(handle: Long)
     private external fun nativeHasServer(handle: Long): Boolean
+    private external fun nativeServerOpenIdStart(handle: Long, url: String): String
+    private external fun nativeServerOpenIdFinish(handle: Long, code: String, state: String): String?
     private external fun nativeServerBooks(handle: Long): String
     private external fun nativeServerOpen(handle: Long, id: String, cacheDir: String): String?
     private external fun nativeServerSync(handle: Long): Boolean

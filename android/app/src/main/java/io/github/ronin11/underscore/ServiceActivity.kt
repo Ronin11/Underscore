@@ -251,8 +251,19 @@ abstract class ServiceActivity : AppCompatActivity() {
         }
         AlertDialog.Builder(this)
             .setTitle("Audiobookshelf")
-            .setMessage("Your own server. The password is used once to sign in and is not kept.")
+            .setMessage("Your own server. The password is used once to sign in and is not kept. If your account signs in through Authentik or another single sign-on, fill in only the address and use that button instead.")
             .setView(box)
+            .setNeutralButton("Sign in with Authentik") { _, _ ->
+                s.serverOpenIdStart(url.text.toString()) { authorize, problem ->
+                    if (authorize != null) {
+                        startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse(authorize)))
+                    } else {
+                        toast(problem ?: "Single sign-on did not start")
+                    }
+                    refresh()
+                }
+                refresh()
+            }
             .setPositiveButton("Sign in") { _, _ ->
                 s.serverLogin(url.text.toString(), user.text.toString(), secret.text.toString()) { problem ->
                     toast(problem ?: "Signed in")

@@ -25,7 +25,8 @@ use std::time::Duration;
 use underscore_core::{LayerId, Player, PlayerConfig, RewindPolicy, SleepTimer, Source};
 use underscore_decode::{Chapter, FileSource, MediaSource, probe, probe_path};
 use underscore_library::{
-    Audiobookshelf, Cache, Credentials, ItemId, LocalLibrary, Role, Subsonic, SubsonicLogin,
+    Audiobookshelf, Cache, Credentials, ItemId, LocalLibrary, OpenIdStart, Role, Subsonic,
+    SubsonicLogin,
 };
 use underscore_map::Map;
 
@@ -62,6 +63,8 @@ pub struct Bridge {
     /// The music server (Navidrome or any Subsonic-compatible one), once
     /// signed in. Maps play from it instead of a folder when it is set.
     music_server: Option<Arc<Subsonic>>,
+    /// A single sign-on waiting for the browser to come back.
+    openid: Option<OpenIdStart>,
 }
 
 impl std::fmt::Debug for Bridge {
@@ -102,6 +105,7 @@ impl Bridge {
             server: None,
             book: None,
             music_server: None,
+            openid: None,
         }
     }
 
@@ -219,6 +223,48 @@ impl Bridge {
         let server = Audiobookshelf::with_credentials("abs", url, creds);
         server.whoami().map_err(|e| e.to_string())?;
         Ok(Arc::new(server))
+    }
+
+    /// Where the browser returns after a single sign-on. The app answers
+    /// both. Its own comes first; the stock one is what Audiobookshelf
+    /// allows out of the box.
+    pub const OPENID_REDIRECTS: [&'static str; 2] =
+        ["underscore://oauth", "audiobookshelf://oauth"];
+
+    /// Begin signing in to an Audiobookshelf server through its single
+    /// sign-on. Does network I/O: call it outside the lock, then park the
+    /// result with [`Bridge::set_openid`] and send the browser to its
+    /// `authorize_url`.
+    ///
+    /// # Errors
+    /// The server could not be reached or has no single sign-on for apps.
+    pub fn openid_start(url: &str) -> Result<OpenIdStart, String> {
+        Audiobookshelf::openid_start(url, &Self::OPENID_REDIRECTS).map_err(|e| e.to_string())
+    }
+
+    /// Finish a single sign-on with what the browser brought back. Does
+    /// network I/O like [`Bridge::sign_in`].
+    ///
+    /// # Errors
+    /// The answer is for another sign-in, or the server refused it.
+    pub fn openid_finish(
+        start: &OpenIdStart,
+        code: &str,
+        state: &str,
+    ) -> Result<Arc<Audiobookshelf>, String> {
+        Audiobookshelf::openid_finish("abs", start, code, state)
+            .map(Arc::new)
+            .map_err(|e| e.to_string())
+    }
+
+    /// Park, or drop, a single sign-on while the browser is out.
+    pub fn set_openid(&mut self, start: Option<OpenIdStart>) {
+        self.openid = start;
+    }
+
+    /// The parked single sign-on, taken so it is used once.
+    pub fn take_openid(&mut self) -> Option<OpenIdStart> {
+        self.openid.take()
     }
 
     /// Use, or forget, a server.

@@ -189,6 +189,7 @@ class PlaybackService : Service() {
             ACTION_TOGGLE -> toggle()
             ACTION_BACK -> skipBack()
             ACTION_FORWARD -> skipForward()
+            ACTION_OPENID_RETURN -> intent.data?.let { serverOpenIdFinish(it) }
         }
         return START_STICKY
     }
@@ -382,6 +383,49 @@ class PlaybackService : Service() {
             serverBusy = null
             mainHandler.post { onDone(problem) }
         }, "underscore-server").start()
+    }
+
+    /**
+     * Begin a single sign-on (Authentik or another OpenID provider behind
+     * Audiobookshelf). [onDone] gets the address to open in the browser, or
+     * null and what went wrong. The browser comes back through
+     * [SignInReturnActivity], which hands the address to [serverOpenIdFinish].
+     */
+    fun serverOpenIdStart(url: String, onDone: (String?, String?) -> Unit) {
+        val base = url.trim().trimEnd('/')
+        serverUrl = base
+        serverBusy = "Starting single sign-on with $base…"
+        Thread({
+            val json = engine.serverOpenIdStart(base)
+            serverBusy = null
+            val o = try { org.json.JSONObject(json) } catch (e: org.json.JSONException) { null }
+            val authorize = o?.optString("url")?.takeIf { it.isNotEmpty() }
+            val problem = if (authorize == null) o?.optString("error") ?: "bad answer from the engine" else null
+            mainHandler.post { onDone(authorize, problem) }
+        }, "underscore-server").start()
+    }
+
+    /** The browser came back from the single sign-on with [uri]. */
+    private fun serverOpenIdFinish(uri: Uri) {
+        val code = uri.getQueryParameter("code")
+        val state = uri.getQueryParameter("state")
+        if (code == null || state == null) {
+            val why = uri.getQueryParameter("error_description") ?: uri.getQueryParameter("error") ?: "no code"
+            toast("Sign-in did not finish: $why")
+            return
+        }
+        val base = serverUrl
+        serverBusy = "Finishing sign-in…"
+        Thread({
+            val problem = engine.serverOpenIdFinish(code, state)
+            if (problem == null && base != null) saveServer(base)
+            serverBusy = null
+            mainHandler.post { toast(problem ?: "Signed in to Audiobookshelf") }
+        }, "underscore-server").start()
+    }
+
+    private fun toast(text: String) {
+        android.widget.Toast.makeText(applicationContext, text, android.widget.Toast.LENGTH_LONG).show()
     }
 
     /** Sign out and forget the saved tokens. */
@@ -716,6 +760,8 @@ class PlaybackService : Service() {
         private const val ACTION_TOGGLE = "io.github.ronin11.underscore.TOGGLE"
         private const val ACTION_BACK = "io.github.ronin11.underscore.BACK"
         private const val ACTION_FORWARD = "io.github.ronin11.underscore.FORWARD"
+        /** The browser came back from a single sign-on; the intent's data is the address. */
+        const val ACTION_OPENID_RETURN = "io.github.ronin11.underscore.OPENID_RETURN"
         private const val ACTIONS =
             PlaybackStateCompat.ACTION_PLAY or
                 PlaybackStateCompat.ACTION_PAUSE or

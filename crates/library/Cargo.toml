@@ -13,6 +13,9 @@ underscore-map = { path = "../map" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 ureq = { version = "3", features = ["json"] }
+# Already in the tree through ureq's TLS; used for the sign-in's PKCE.
+base64 = "0.23"
+ring = "0.17"
 md-5 = "0.11.0"
 
 [lints]

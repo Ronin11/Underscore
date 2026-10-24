@@ -1030,7 +1030,9 @@ dependencies = [
 name = "underscore-library"
 version = "0.1.0"
 dependencies = [
+ "base64",
  "md-5",
+ "ring",
  "serde",
  "serde_json",
  "underscore-core",

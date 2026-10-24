@@ -43,6 +43,28 @@
             android:label="Debug"
             android:parentActivityName=".MainActivity" />
 
+        <!-- Where the browser returns after an Audiobookshelf single sign-on.
+             Ours first; the stock address is what servers allow by default. -->
+        <activity
+            android:name=".SignInReturnActivity"
+            android:exported="true"
+            android:launchMode="singleTask"
+            android:noHistory="true"
+            android:theme="@android:style/Theme.NoDisplay">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="underscore" android:host="oauth" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="audiobookshelf" android:host="oauth" />
+            </intent-filter>
+        </activity>
+
         <service
             android:name=".PlaybackService"
             android:exported="false"

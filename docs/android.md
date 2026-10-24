@@ -86,6 +86,17 @@ the position back every half minute while playing and whenever it
 pauses, so other Audiobookshelf clients carry on from the same place.
 The chapter list comes from the server when the file has none.
 
+An account that signs in through the server's single sign-on (OpenID,
+such as Authentik) uses "Sign in with Authentik" in the same dialog with
+only the address filled in. The browser opens the provider's own page,
+then returns to the app at `underscore://oauth`, or at the stock
+`audiobookshelf://oauth` that servers allow by default, and the app
+trades the answer for tokens. This is the server's mobile flow with
+PKCE; the password never reaches the app. To use the app's own address,
+add `underscore://oauth` to the allowed mobile redirect URIs in the
+server's authentication settings. If the official Audiobookshelf app is
+also installed, Android may ask which app should open the stock address.
+
 Only books that are one audio file play for now; a book split across
 many files is listed, and picking it says so. Podcasts are not listed.
 The whole file comes down before playback starts, which on a home
