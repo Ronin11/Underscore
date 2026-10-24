@@ -34,6 +34,7 @@ class SettingsActivity : ServiceActivity() {
     private lateinit var musicLevelValue: TextView
     private lateinit var musicFolder: Row
     private lateinit var server: Row
+    private lateinit var musicServer: Row
 
     private val pickMusicFolder = registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
         uri?.let { chooseMusicFolder(it) }
@@ -49,8 +50,15 @@ class SettingsActivity : ServiceActivity() {
         if (!keepScreen.isPressed) keepScreen.isChecked = settings.keepScreenOn
         if (!musicLevel.isPressed) musicLevel.progress = settings.musicLevel
         musicLevelValue.text = "${settings.musicLevel}%"
-        musicFolder.summary = settings.musicDir ?: "Not set. Maps need one to find their music."
+        musicFolder.summary = settings.musicDir ?: "Not set. Used when no music server is signed in."
         val s = service
+        musicServer.summary = when {
+            s == null -> "Starting…"
+            s.musicServerBusy != null -> s.musicServerBusy
+            s.engine.hasMusicServer -> "Signed in to ${s.musicServerUrl}. Maps play from it."
+            s.musicServerUrl != null -> "${s.musicServerUrl}, not signed in"
+            else -> "Not signed in. Maps need this or a music folder."
+        }
         server.summary = when {
             s == null -> "Starting…"
             s.serverBusy != null -> s.serverBusy
@@ -183,6 +191,11 @@ class SettingsActivity : ServiceActivity() {
         )
         musicFolder = row("Music folder", null) { pickMusicFolder.launch(null) }
         list.addView(musicFolder.view)
+
+        list.addView(divider())
+        list.addView(heading("Music server"))
+        musicServer = row("Navidrome", null) { musicServerDialog() }
+        list.addView(musicServer.view)
 
         list.addView(divider())
         list.addView(heading("Audiobookshelf"))

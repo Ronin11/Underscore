@@ -298,8 +298,8 @@ class MainActivity : ServiceActivity() {
         }
         val map = menu.menu.addSubMenu("Music map")
         map.add("Load a map…").setOnMenuItemClickListener {
-            if (s.musicDir == null) {
-                toast("Set the music folder in Settings first")
+            if (s.musicDir == null && !s.engine.hasMusicServer) {
+                toast("Sign in to the music server or set the music folder in Settings first")
             } else {
                 pickMap.launch(MAP_TYPES)
             }

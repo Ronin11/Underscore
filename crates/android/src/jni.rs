@@ -24,7 +24,7 @@ use jni::objects::{JFloatArray, JObject, JString};
 use jni::sys::{JNI_FALSE, JNI_TRUE, jboolean, jfloat, jint, jlong, jstring};
 
 use underscore_decode::Chapter;
-use underscore_library::{Cache, Credentials, ItemId, Library, Role};
+use underscore_library::{Cache, Credentials, ItemId, Library, Role, SubsonicLogin};
 
 use crate::{Bridge, hint_for_mime};
 
@@ -369,6 +369,34 @@ pub extern "system" fn Java_io_github_ronin11_underscore_Engine_nativeLoadMap(
     }
 }
 
+/// Load a music map that plays from the music server. Returns null when
+/// the map is loaded, otherwise a message saying what was wrong. Slow:
+/// reads the server's song list before taking the lock. Call it from a
+/// background thread.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_io_github_ronin11_underscore_Engine_nativeLoadMapFromServer(
+    mut env: JNIEnv,
+    _this: JObject,
+    handle: jlong,
+    toml: JString,
+    cache_dir: JString,
+) -> jstring {
+    let (Some(toml), Some(cache_dir)) = (string(&mut env, &toml), string(&mut env, &cache_dir))
+    else {
+        return jstr(&env, "map and cache folder are both needed");
+    };
+    let Some(server) = with(handle, None, |b| b.music_server()) else {
+        return jstr(&env, "not signed in to a music server");
+    };
+    match Bridge::prepare_map_from_server(&toml, server, &PathBuf::from(cache_dir)) {
+        Ok(prepared) => {
+            with(handle, false, |b| b.install_map(prepared));
+            std::ptr::null_mut()
+        }
+        Err(e) => jstr(&env, &e),
+    }
+}
+
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_io_github_ronin11_underscore_Engine_nativeClearMap(
     _env: JNIEnv,
@@ -596,6 +624,102 @@ pub extern "system" fn Java_io_github_ronin11_underscore_Engine_nativeHasServer(
     handle: jlong,
 ) -> jboolean {
     jbool(with(handle, false, |b| b.server().is_some()))
+}
+
+// The music server. Like Audiobookshelf, every call that talks to it does
+// so with the lock released, from a Kotlin background thread.
+
+/// Sign in to the music server. Null on success, otherwise what went wrong.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_io_github_ronin11_underscore_Engine_nativeMusicLogin(
+    mut env: JNIEnv,
+    _this: JObject,
+    handle: jlong,
+    url: JString,
+    username: JString,
+    secret: JString,
+) -> jstring {
+    let args = (
+        string(&mut env, &url),
+        string(&mut env, &username),
+        string(&mut env, &secret),
+    );
+    let (Some(url), Some(username), Some(secret)) = args else {
+        return jstr(
+            &env,
+            "server address, username, and password are all needed",
+        );
+    };
+    match Bridge::sign_in_music(&url, &username, &secret) {
+        Ok(server) => {
+            with(handle, (), |b| b.set_music_server(Some(server)));
+            std::ptr::null_mut()
+        }
+        Err(e) => jstr(&env, &e),
+    }
+}
+
+/// Come back to the music server with a saved login. Null on success,
+/// otherwise why not.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_io_github_ronin11_underscore_Engine_nativeMusicResume(
+    mut env: JNIEnv,
+    _this: JObject,
+    handle: jlong,
+    url: JString,
+    username: JString,
+    salt: JString,
+    token: JString,
+) -> jstring {
+    let args = (
+        string(&mut env, &url),
+        string(&mut env, &username),
+        string(&mut env, &salt),
+        string(&mut env, &token),
+    );
+    let (Some(url), Some(user), Some(salt), Some(token)) = args else {
+        return jstr(&env, "server address and saved login are needed");
+    };
+    match Bridge::resume_music(&url, SubsonicLogin { user, salt, token }) {
+        Ok(server) => {
+            with(handle, (), |b| b.set_music_server(Some(server)));
+            std::ptr::null_mut()
+        }
+        Err(e) => jstr(&env, &e),
+    }
+}
+
+/// The login to save: user, salt and token, one per line. Null when no
+/// music server is in use.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_io_github_ronin11_underscore_Engine_nativeMusicCredentials(
+    env: JNIEnv,
+    _this: JObject,
+    handle: jlong,
+) -> jstring {
+    let Some(server) = with(handle, None, |b| b.music_server()) else {
+        return std::ptr::null_mut();
+    };
+    let c = server.credentials();
+    jstr(&env, &format!("{}\n{}\n{}", c.user, c.salt, c.token))
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_io_github_ronin11_underscore_Engine_nativeMusicForget(
+    _env: JNIEnv,
+    _this: JObject,
+    handle: jlong,
+) {
+    with(handle, (), |b| b.set_music_server(None));
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_io_github_ronin11_underscore_Engine_nativeHasMusicServer(
+    _env: JNIEnv,
+    _this: JObject,
+    handle: jlong,
+) -> jboolean {
+    jbool(with(handle, false, |b| b.music_server().is_some()))
 }
 
 /// The server's books as JSON: `{"books":[{"id","title","author",

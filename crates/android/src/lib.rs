@@ -24,7 +24,9 @@ use std::time::Duration;
 
 use underscore_core::{LayerId, Player, PlayerConfig, RewindPolicy, SleepTimer, Source};
 use underscore_decode::{Chapter, FileSource, MediaSource, probe, probe_path};
-use underscore_library::{Audiobookshelf, Cache, Credentials, ItemId, LocalLibrary, Role};
+use underscore_library::{
+    Audiobookshelf, Cache, Credentials, ItemId, LocalLibrary, Role, Subsonic, SubsonicLogin,
+};
 use underscore_map::Map;
 
 use crate::follow::{Job, MapPlayback, Wake};
@@ -57,6 +59,9 @@ pub struct Bridge {
     server: Option<Arc<Audiobookshelf>>,
     /// The server book that is loaded, for progress reports.
     book: Option<ItemId>,
+    /// The music server (Navidrome or any Subsonic-compatible one), once
+    /// signed in. Maps play from it instead of a folder when it is set.
+    music_server: Option<Arc<Subsonic>>,
 }
 
 impl std::fmt::Debug for Bridge {
@@ -96,6 +101,7 @@ impl Bridge {
             wake: Arc::new(Wake::default()),
             server: None,
             book: None,
+            music_server: None,
         }
     }
 
@@ -235,6 +241,44 @@ impl Bridge {
         self.book.clone()
     }
 
+    /// Sign in to a music server. Does network I/O: call it off the audio
+    /// thread and outside the lock, then hand the result to
+    /// [`Bridge::set_music_server`].
+    ///
+    /// # Errors
+    /// The server could not be reached or refused the login.
+    pub fn sign_in_music(
+        url: &str,
+        username: &str,
+        password: &str,
+    ) -> Result<Arc<Subsonic>, String> {
+        Subsonic::login("navidrome", url, username, password)
+            .map(Arc::new)
+            .map_err(|e| e.to_string())
+    }
+
+    /// Come back to a music server with a saved login. Checks it with one
+    /// request, so it does network I/O like [`Bridge::sign_in_music`].
+    ///
+    /// # Errors
+    /// The server could not be reached or no longer accepts the login.
+    pub fn resume_music(url: &str, login: SubsonicLogin) -> Result<Arc<Subsonic>, String> {
+        let server = Subsonic::with_login("navidrome", url, login);
+        server.ping().map_err(|e| e.to_string())?;
+        Ok(Arc::new(server))
+    }
+
+    /// Use, or forget, a music server.
+    pub fn set_music_server(&mut self, server: Option<Arc<Subsonic>>) {
+        self.music_server = server;
+    }
+
+    /// The music server in use, shared so callers can talk to it off the lock.
+    #[must_use]
+    pub fn music_server(&self) -> Option<Arc<Subsonic>> {
+        self.music_server.clone()
+    }
+
     /// A new book is loaded: keep its chapters and refit the map to it.
     fn set_chapters(&mut self, chapters: Vec<Chapter>) {
         self.chapters = chapters;
@@ -337,6 +381,29 @@ impl Bridge {
         }
         let cache = Cache::open(cache_dir).map_err(|e| format!("cache: {e}"))?;
         Ok(MapPlayback::new(map, Arc::new(library), cache))
+    }
+
+    /// Parse a map and load the song list of the music server it will play
+    /// from. Slow: it reads every song on the server. Run it on a worker
+    /// thread and never under the bridge lock, then hand the result to
+    /// [`Bridge::install_map`]. Once the list is loaded, resolving the map
+    /// is a search in memory, so fitting it later is cheap under the lock.
+    ///
+    /// # Errors
+    /// The map does not parse, the server cannot be read or holds no
+    /// music, or the cache directory cannot be created.
+    pub fn prepare_map_from_server(
+        toml: &str,
+        server: Arc<Subsonic>,
+        cache_dir: &Path,
+    ) -> Result<MapPlayback, String> {
+        let map = Map::parse(toml).map_err(|e| e.to_string())?;
+        let n = server.refresh_items().map_err(|e| e.to_string())?;
+        if n == 0 {
+            return Err(format!("no music on {}", server.base()));
+        }
+        let cache = Cache::open(cache_dir).map_err(|e| format!("cache: {e}"))?;
+        Ok(MapPlayback::new(map, server, cache))
     }
 
     /// Follow a prepared map. Fits it to the loaded book, if there is one;
@@ -740,6 +807,21 @@ mod tests {
         assert!(b.map_status().contains("not following"));
         assert!(b.load_speech_path(&fixture()));
         assert!(b.map_status().starts_with("Map: 1 of 1"));
+    }
+
+    #[test]
+    fn a_bad_map_is_refused_before_the_music_server_is_asked() {
+        // Nothing listens on port 1, so any request would fail with a
+        // network error instead of the parse error checked here.
+        let server = Arc::new(Subsonic::with_login(
+            "navidrome",
+            "http://127.0.0.1:1",
+            SubsonicLogin::from_password("n", "p"),
+        ));
+        let dir = std::env::temp_dir().join("underscore-no-server-cache");
+        let err = Bridge::prepare_map_from_server("version = 1\n[[cue]]\nat = 0", server, &dir)
+            .unwrap_err();
+        assert!(!err.contains("127.0.0.1"), "{err}");
     }
 
     #[test]

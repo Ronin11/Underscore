@@ -56,6 +56,14 @@ class Engine(sampleRate: Int, val channels: Int) : AutoCloseable {
      */
     fun loadMap(toml: String, musicDir: String, cacheDir: String): String? =
         nativeLoadMap(h(), toml, musicDir, cacheDir)
+    /**
+     * Follow a music map that plays from the music server, which must be
+     * signed in. Reads the server's whole song list, so it is slow: call it
+     * from a background thread. Returns null when the map is loaded,
+     * otherwise what was wrong.
+     */
+    fun loadMapFromServer(toml: String, cacheDir: String): String? =
+        nativeLoadMapFromServer(h(), toml, cacheDir)
     /** Stop following the map and fade its music out. */
     fun clearMap() = nativeClearMap(h())
     val hasMap: Boolean get() = nativeHasMap(h())
@@ -80,6 +88,20 @@ class Engine(sampleRate: Int, val channels: Int) : AutoCloseable {
     fun serverOpen(id: String, cacheDir: String): String? = nativeServerOpen(h(), id, cacheDir)
     /** Report the position of the loaded server book. */
     fun serverSync(): Boolean = nativeServerSync(h())
+
+    /**
+     * The music server (Navidrome or any Subsonic-compatible one). All of
+     * these talk to the server, so call them from a background thread.
+     * Errors come back as a message; null is success.
+     */
+    fun musicLogin(url: String, username: String, secret: String): String? =
+        nativeMusicLogin(h(), url, username, secret)
+    fun musicResume(url: String, user: String, salt: String, token: String): String? =
+        nativeMusicResume(h(), url, user, salt, token)
+    /** User, salt and token, one per line. Null without a music server. */
+    val musicCredentials: String? get() = nativeMusicCredentials(h())
+    fun musicForget() = nativeMusicForget(h())
+    val hasMusicServer: Boolean get() = nativeHasMusicServer(h())
 
     /** Fill [out] with interleaved samples; returns frames written. */
     fun render(out: FloatArray, nowMs: Long): Int = nativeRender(h(), out, nowMs)
@@ -123,7 +145,13 @@ class Engine(sampleRate: Int, val channels: Int) : AutoCloseable {
     private external fun nativeSetSleepEndOfChapter(handle: Long, nowMs: Long)
     private external fun nativeSleepAtChapterEnd(handle: Long): Boolean
     private external fun nativeLoadMap(handle: Long, toml: String, musicDir: String, cacheDir: String): String?
+    private external fun nativeLoadMapFromServer(handle: Long, toml: String, cacheDir: String): String?
     private external fun nativeClearMap(handle: Long)
+    private external fun nativeMusicLogin(handle: Long, url: String, username: String, secret: String): String?
+    private external fun nativeMusicResume(handle: Long, url: String, user: String, salt: String, token: String): String?
+    private external fun nativeMusicCredentials(handle: Long): String?
+    private external fun nativeMusicForget(handle: Long)
+    private external fun nativeHasMusicServer(handle: Long): Boolean
     private external fun nativeHasMap(handle: Long): Boolean
     private external fun nativeMapStatus(handle: Long): String
     private external fun nativeServerLogin(handle: Long, url: String, username: String, secret: String): String?

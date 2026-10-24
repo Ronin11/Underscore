@@ -89,12 +89,19 @@ class PlaybackService : Service() {
     /** The Audiobookshelf address in use, or the last one tried. */
     var serverUrl: String? = null
         private set
+    /** The music server address in use, or the last one tried. */
+    var musicServerUrl: String? = null
+        private set
+    /** What the music server thread is doing right now, for the UI; null when idle. */
+    @Volatile var musicServerBusy: String? = null
+        private set
     /** What the server thread is doing right now, for the UI; null when idle. */
     @Volatile var serverBusy: String? = null
         private set
     private var lastSyncMs = 0L
     @Volatile private var syncing = false
     private val prefs by lazy { getSharedPreferences("server", Context.MODE_PRIVATE) }
+    private val musicPrefs by lazy { getSharedPreferences("music_server", Context.MODE_PRIVATE) }
 
     /** One book on the server, as the list shows it. */
     data class ServerBook(val id: String, val title: String, val author: String, val durationMs: Long)
@@ -170,6 +177,7 @@ class PlaybackService : Service() {
         publishState()
         mainHandler.post(stateTick)
         resumeServer()
+        resumeMusicServer()
     }
 
     override fun onBind(intent: Intent?): IBinder = binder
@@ -286,14 +294,20 @@ class PlaybackService : Service() {
      */
     fun loadMap(toml: String, name: String?, onDone: (String?) -> Unit) {
         val dir = musicDir
-        if (dir == null) {
-            onDone("Set the music folder in Settings first")
+        val fromServer = engine.hasMusicServer
+        if (!fromServer && dir == null) {
+            onDone("Sign in to the music server or set the music folder in Settings first")
             return
         }
         val cache = File(cacheDir, "library")
         mapLoading = true
         Thread({
-            val problem = engine.loadMap(toml, dir.absolutePath, cache.absolutePath)
+            // The music server wins when both are set.
+            val problem = when {
+                fromServer -> engine.loadMapFromServer(toml, cache.absolutePath)
+                dir != null -> engine.loadMap(toml, dir.absolutePath, cache.absolutePath)
+                else -> "Set the music folder in Settings first"
+            }
             if (problem == null) mapName = name
             mapLoading = false
             mainHandler.post { onDone(problem) }
@@ -303,6 +317,54 @@ class PlaybackService : Service() {
     fun clearMap() {
         engine.clearMap()
         mapName = null
+    }
+
+    // The music server. Same shape as Audiobookshelf below, but what is
+    // kept is the user name and a salted token, never the password.
+
+    /** Sign in to the music server; [onDone] gets null or what went wrong. */
+    fun musicServerLogin(url: String, username: String, secret: String, onDone: (String?) -> Unit) {
+        val base = url.trim().trimEnd('/')
+        musicServerUrl = base
+        musicServerBusy = "Signing in to $base…"
+        Thread({
+            val problem = engine.musicLogin(base, username, secret)
+            if (problem == null) saveMusicServer(base)
+            musicServerBusy = null
+            mainHandler.post { onDone(problem) }
+        }, "underscore-music-server").start()
+    }
+
+    /** Sign out and forget the saved login. */
+    fun musicServerForget() {
+        engine.musicForget()
+        musicPrefs.edit().clear().apply()
+    }
+
+    /** Come back to the music server from the last run, if there was one. */
+    private fun resumeMusicServer() {
+        val base = musicPrefs.getString("url", null) ?: return
+        val user = musicPrefs.getString("user", null) ?: return
+        val salt = musicPrefs.getString("salt", null) ?: return
+        val token = musicPrefs.getString("token", null) ?: return
+        musicServerUrl = base
+        musicServerBusy = "Reconnecting to $base…"
+        Thread({
+            val problem = engine.musicResume(base, user, salt, token)
+            musicServerBusy = null
+            if (problem != null) android.util.Log.w("underscore", "music server: $problem")
+        }, "underscore-music-server").start()
+    }
+
+    private fun saveMusicServer(base: String) {
+        val lines = (engine.musicCredentials ?: return).split('\n')
+        if (lines.size < 3) return
+        musicPrefs.edit()
+            .putString("url", base)
+            .putString("user", lines[0])
+            .putString("salt", lines[1])
+            .putString("token", lines[2])
+            .apply()
     }
 
     // Audiobookshelf. Every call to the engine's server functions does
@@ -447,6 +509,7 @@ class PlaybackService : Service() {
             appendLine("music folder: ${musicDir?.absolutePath ?: "none"}; map: ${mapName ?: "none"}, loading $mapLoading")
             appendLine("settings: skip -${settings.skipBackSec}/+${settings.skipForwardSec} s, rewind ${settings.rewindOnResume}, music level ${settings.musicLevel}, keep screen on ${settings.keepScreenOn}")
             appendLine("map status: ${engine.mapStatus}")
+            appendLine("music server: ${musicServerUrl ?: "none"}, signed in ${engine.hasMusicServer}, busy ${musicServerBusy ?: "no"}")
             appendLine("server: ${serverUrl ?: "none"}, signed in ${engine.hasServer}, busy ${serverBusy ?: "no"}")
             appendLine("session: active ${session.isActive}")
             if (state == null) {

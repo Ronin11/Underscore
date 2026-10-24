@@ -264,6 +264,52 @@ abstract class ServiceActivity : AppCompatActivity() {
             .show()
     }
 
+    /** Sign in to the music server (Navidrome), or sign out of the current one. */
+    protected fun musicServerDialog() {
+        val s = service ?: return
+        if (s.engine.hasMusicServer) {
+            AlertDialog.Builder(this)
+                .setTitle("Music server")
+                .setMessage("Signed in to ${s.musicServerUrl}")
+                .setPositiveButton("Sign out") { _, _ -> s.musicServerForget(); refresh() }
+                .setNegativeButton("Close", null)
+                .show()
+            return
+        }
+        val pad = dp(16)
+        val url = EditText(this).apply {
+            hint = "Server address"
+            setText(s.musicServerUrl ?: "http://")
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI
+        }
+        val user = EditText(this).apply {
+            hint = "Username"
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD
+        }
+        val secret = EditText(this).apply {
+            hint = "Password"
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
+        }
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(pad, pad / 2, pad, 0)
+            addView(url); addView(user); addView(secret)
+        }
+        AlertDialog.Builder(this)
+            .setTitle("Music server")
+            .setMessage("Navidrome or any Subsonic-compatible server of your own. Maps play their music from it. The password is used once to sign in and is not kept.")
+            .setView(box)
+            .setPositiveButton("Sign in") { _, _ ->
+                s.musicServerLogin(url.text.toString(), user.text.toString(), secret.text.toString()) { problem ->
+                    toast(problem ?: "Signed in")
+                    refresh()
+                }
+                refresh()
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
     /** A horizontal rule between groups. */
     protected fun divider(): View = View(this).apply {
         setBackgroundColor(0x22808080)

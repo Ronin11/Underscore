@@ -58,6 +58,21 @@ whatever the map says, until the next cue replaces it.
 Folders on the Downloads provider or a cloud provider have no path and
 cannot be scanned; pick one on the device or an SD card.
 
+## Music server
+
+The Navidrome row in Settings, or any other Subsonic-compatible server,
+asks for the address, username, and password and signs in. What is kept
+is the user name and a salted token, never the password. Once signed in,
+maps play their music from the server instead of the music folder. The
+first time a map loads, the app reads the server's whole song list, which
+takes a few seconds on a big library; after that every cue is resolved in
+memory. Each track is downloaded once, as the server holds it, into the
+same per-stream cache the books use.
+
+A map names its tracks by artist, title, and album, so the server needs
+those tags. The server's address has to be reachable from the phone: a
+`.home` name works on the home network only.
+
 ## Audiobookshelf
 
 "Audiobookshelf server" under the library menu, or the Server row in

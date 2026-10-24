@@ -24,9 +24,11 @@ crates/decode    FileSource: symphonia decoding, resampling, channel mapping.
 crates/map       Music maps: the TOML format, validation, and the schedule that
                  resolves cues against chapter times. Data only, no I/O.
 crates/library   The Library trait (list, search, fetch, progress), LocalLibrary
-                 over folders, Audiobookshelf over HTTP (abs.rs), the per-stream
-                 Cache, and the Conductor that turns a map plus the book position
-                 into player directions.
+                 over folders, Audiobookshelf over HTTP (abs.rs), a
+                 Subsonic-compatible music server such as Navidrome
+                 (subsonic.rs), the per-stream Cache, and the Conductor
+                 that turns a map plus the book position into player
+                 directions.
 crates/android   Bridge (plain Rust over Player), follow.rs (the map worker
                  thread), and jni.rs (JNI exports).
 crates/cli       `underscore` binary. `scan` and `map check`; no playback yet.
@@ -60,7 +62,10 @@ android/         Gradle project. Engine.kt (JNI wrapper), PlaybackService.kt
   does I/O and must not run on the audio thread or under the bridge lock.
   On Android that means the worker in `crates/android/src/follow.rs`;
   `Bridge::prepare_map` scans a folder and is called before the lock is
-  taken, from a Kotlin background thread.
+  taken, from a Kotlin background thread. So is
+  `Bridge::prepare_map_from_server`, which loads the music server's whole
+  song list. After that `Subsonic::search` answers from memory, which is
+  why fitting a map under the lock does no I/O.
 
 ## Checks before any commit
 

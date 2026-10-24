@@ -12,6 +12,7 @@ use std::time::Duration;
 use underscore_core::PlayerConfig;
 use underscore_library::{
     Audiobookshelf, Cache, Conductor, Credentials, Library, LocalLibrary, Resolution, Role,
+    Subsonic,
 };
 use underscore_map::{Map, Timeline};
 
@@ -87,22 +88,30 @@ fn scan(args: &[&str]) -> Result<(), String> {
     Ok(())
 }
 
-/// `map check <map.toml> --music <dir> [--book <file>]`: resolve every cue.
+/// `map check <map.toml> --music <dir>|--navidrome [--book <file>]`: resolve
+/// every cue against a music folder, or against a Subsonic-compatible server whose
+/// address and login come from `NAVIDROME_URL`, `NAVIDROME_USER` and
+/// `NAVIDROME_PASS`, from the environment or from
+/// `~/.config/underscore/navidrome.env`.
 fn map_check(args: &[&str]) -> Result<(), String> {
     let mut map_path = None;
     let mut music = None;
     let mut book = None;
+    let mut navidrome = false;
     let mut it = args.iter();
     while let Some(a) = it.next() {
         match *a {
             "--music" => music = Some(PathBuf::from(it.next().ok_or("--music needs a folder")?)),
+            "--navidrome" => navidrome = true,
             "--book" => book = Some(PathBuf::from(it.next().ok_or("--book needs a file")?)),
             other if map_path.is_none() => map_path = Some(PathBuf::from(other)),
             other => return Err(format!("unexpected argument `{other}`")),
         }
     }
     let map_path = map_path.ok_or("map check needs a map file")?;
-    let music = music.ok_or("map check needs --music <folder>")?;
+    if music.is_none() && !navidrome {
+        return Err("map check needs --music <folder> or --navidrome".into());
+    }
 
     let text =
         std::fs::read_to_string(&map_path).map_err(|e| format!("{}: {e}", map_path.display()))?;
@@ -127,11 +136,9 @@ fn map_check(args: &[&str]) -> Result<(), String> {
         }
     };
 
-    let lib = LocalLibrary::new("music", vec![(Role::Music, music)], None);
-    let n = lib.scan().map_err(|e| e.to_string())?;
-    println!("{n} tracks in the library");
+    let lib = music_source(music, navidrome)?;
 
-    let conductor = Conductor::new(map, &timeline, &lib).map_err(|e| e.to_string())?;
+    let conductor = Conductor::new(map, &timeline, &*lib).map_err(|e| e.to_string())?;
     let mut found = 0;
     for (i, (cue, res)) in conductor
         .map()
@@ -191,6 +198,30 @@ fn map_check(args: &[&str]) -> Result<(), String> {
 
 fn clock(d: Duration) -> String {
     underscore_map::Time::from(d).to_string()
+}
+
+/// The library `map check` resolves against: a folder, or the Navidrome
+/// server named by the environment.
+fn music_source(music: Option<PathBuf>, navidrome: bool) -> Result<Box<dyn Library>, String> {
+    if let Some(music) = music.filter(|_| !navidrome) {
+        let lib = LocalLibrary::new("music", vec![(Role::Music, music)], None);
+        let n = lib.scan().map_err(|e| e.to_string())?;
+        println!("{n} tracks in the library");
+        return Ok(Box::new(lib));
+    }
+    let env = env_file("navidrome.env");
+    let var = |k: &str| std::env::var(k).ok().or_else(|| env.get(k).cloned());
+    let (Some(url), Some(user), Some(pass)) = (
+        var("NAVIDROME_URL"),
+        var("NAVIDROME_USER"),
+        var("NAVIDROME_PASS"),
+    ) else {
+        return Err("set NAVIDROME_URL, NAVIDROME_USER and NAVIDROME_PASS".into());
+    };
+    let server = Subsonic::login("navidrome", &url, &user, &pass).map_err(|e| e.to_string())?;
+    let n = server.refresh_items().map_err(|e| e.to_string())?;
+    println!("{n} tracks on {}", server.base());
+    Ok(Box::new(server))
 }
 
 /// `abs list|fetch <id> --cache <dir>|progress <id>`: talk to an
@@ -263,10 +294,15 @@ fn abs(args: &[&str]) -> Result<(), String> {
 
 /// `KEY=VALUE` lines from `~/.config/underscore/abs.env`, if it exists.
 fn abs_env() -> std::collections::HashMap<String, String> {
+    env_file("abs.env")
+}
+
+/// `KEY=VALUE` lines from a file under `~/.config/underscore/`, if it exists.
+fn env_file(name: &str) -> std::collections::HashMap<String, String> {
     let Some(home) = std::env::var_os("HOME") else {
         return std::collections::HashMap::new();
     };
-    let path = PathBuf::from(home).join(".config/underscore/abs.env");
+    let path = PathBuf::from(home).join(".config/underscore").join(name);
     std::fs::read_to_string(path)
         .unwrap_or_default()
         .lines()

@@ -21,6 +21,7 @@ pub mod abs;
 pub mod cache;
 pub mod conductor;
 pub mod local;
+pub mod subsonic;
 
 use std::fmt;
 use std::path::PathBuf;
@@ -32,6 +33,7 @@ pub use abs::{Audiobookshelf, Credentials};
 pub use cache::Cache;
 pub use conductor::{Conductor, Direction, Resolution};
 pub use local::LocalLibrary;
+pub use subsonic::{Subsonic, SubsonicLogin};
 
 /// What an item is for: the top layer or the bottom one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]

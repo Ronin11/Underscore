@@ -8,7 +8,8 @@ every platform shell.
 
 ```
 sources     crates/library: one Library trait over local folders now, and
-            Audiobookshelf, OpenSubsonic, Jellyfin next; a per-stream cache;
+            Audiobookshelf and Subsonic-compatible servers (Navidrome), Jellyfin
+            next; a per-stream cache;
             the conductor that follows a music map
    │
 map         crates/map: which music under which stretch of the book, as data
@@ -186,8 +187,8 @@ desktop playback because that is where listening happens.
    position and files, microphone noise feed, a music queue, cover art.
 3. **Library layer and map playback.** The trait, local folders, the
    cache, the conductor, M4B chapters, and the Android app following a
-   map are in. Next: Audiobookshelf, OpenSubsonic, and Jellyfin behind
-   the same trait.
+   map are in, with Audiobookshelf for books and a Subsonic-compatible
+   server such as Navidrome for music. Next: Jellyfin behind the same trait.
 4. **Local desktop playback.** `underscore play <book> <music>` via `cpal`.
    Mostly a developer tool for tuning the engine with real material.
 5. **Map authoring.** `underscore map`: transcript in, map out, with the
