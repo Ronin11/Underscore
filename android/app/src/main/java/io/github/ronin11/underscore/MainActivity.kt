@@ -56,6 +56,7 @@ class MainActivity : ServiceActivity() {
     private lateinit var chaptersTile: Tile
     private lateinit var musicTile: Tile
     private var scrubbing = false
+    private val sleepSetup = SleepSetup(this, { service }) { refresh() }
 
     private val pickSpeech = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         uri?.let { loadBook(it) }
@@ -203,6 +204,7 @@ class MainActivity : ServiceActivity() {
         sleepTile.value.text = when {
             left >= 0 -> fmt(left)
             e.sleepAtChapterEnd -> "Chapter end"
+            s.settings.sleepAuto -> "Auto"
             else -> "Off"
         }
         chaptersTile.value.text = if (inChapter) "${chapter + 1} of $chapters" else if (chapters > 0) "$chapters" else "None"
@@ -282,32 +284,61 @@ class MainActivity : ServiceActivity() {
             .show()
     }
 
+    /**
+     * Auto, Manual, or Off. Manual holds the timers; Auto lists the sleep
+     * sources set up so far, with Add… to set up another.
+     */
     private fun sleepMenu(anchor: View) {
         val s = service ?: return
         val e = s.engine
         val menu = PopupMenu(this, anchor)
         val running = e.sleepRemainingMs(s.now()) >= 0
-        menu.menu.add("Off").setOnMenuItemClickListener { e.setSleepMs(0, s.now()); refresh(); true }
+        val manual = running || e.sleepAtChapterEnd
+        val auto = s.settings.sleepAuto
+        menu.menu.add(0, 0, 0, "Auto…").apply {
+            isCheckable = true
+            isChecked = auto && !manual
+            setOnMenuItemClickListener { sleepSetup.auto(); true }
+        }
+        val timers = menu.menu.addSubMenu(0, 1, 1, "Manual")
+        timers.item.isCheckable = true
+        timers.item.isChecked = manual
+        fun timer(set: () -> Unit) {
+            if (s.settings.sleepAuto) sleepSetup.setAuto(false)
+            set()
+            refresh()
+        }
         for (minutes in intArrayOf(10, 15, 20, 30, 45, 60)) {
-            menu.menu.add("$minutes minutes").setOnMenuItemClickListener {
-                e.setSleepMs(minutes * 60_000L, s.now()); refresh(); true
+            timers.add("$minutes minutes").setOnMenuItemClickListener {
+                timer { e.setSleepMs(minutes * 60_000L, s.now()) }; true
             }
         }
-        menu.menu.add("End of this chapter").apply {
+        timers.add("End of this chapter").apply {
             isEnabled = e.chapterCount > 0
-            setOnMenuItemClickListener { e.setSleepEndOfChapter(s.now()); refresh(); true }
+            setOnMenuItemClickListener { timer { e.setSleepEndOfChapter(s.now()) }; true }
         }
         if (running) {
-            menu.menu.add("10 more minutes").setOnMenuItemClickListener {
+            timers.add("10 more minutes").setOnMenuItemClickListener {
                 e.extendSleepMs(10 * 60_000L, s.now()); refresh(); true
+            }
+        }
+        menu.menu.add(0, 2, 2, "Off").apply {
+            isCheckable = true
+            isChecked = !auto && !manual
+            setOnMenuItemClickListener {
+                e.setSleepMs(0, s.now())
+                if (s.settings.sleepAuto) sleepSetup.setAuto(false)
+                refresh()
+                true
             }
         }
         val dozed = s.dozedAtMs
         if (dozed >= 0) {
-            menu.menu.add("Back to where I fell asleep (${fmt(dozed)})").setOnMenuItemClickListener {
+            menu.menu.add(1, 3, 3, "Back to where I fell asleep (${fmt(dozed)})").setOnMenuItemClickListener {
                 s.backToDozed(); refresh(); true
             }
         }
+        menu.menu.setGroupCheckable(0, true, true)
         menu.show()
     }
 

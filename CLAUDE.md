@@ -43,7 +43,8 @@ android/         Gradle project. Engine.kt (JNI wrapper), PlaybackService.kt
                  MainActivity.kt (the player), BooksActivity.kt (the server's
                  books), SettingsActivity.kt,
                  DebugActivity.kt, BugReport.kt, Sleep.kt (the sources that
-                 notice the listener fell asleep). UI built in code, no layout
+                 notice the listener fell asleep), SleepSetup.kt (their
+                 setup and test screens). UI built in code, no layout
                  XML; icons are vector drawables under res/drawable.
 .github/         ci.yml (fmt, clippy, test) and android.yml (APK pre-release).
 ```

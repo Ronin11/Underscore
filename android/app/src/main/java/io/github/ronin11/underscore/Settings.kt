@@ -41,7 +41,17 @@ class Settings(context: Context) {
         get() = prefs.getString(MUSIC_DIR, null)
         set(v) = prefs.edit().putString(MUSIC_DIR, v).apply()
 
-    /** Whether the sleep source with this key may wind the book down. All start off. */
+    /** The Sleep button's Auto: the checked sleep sources may wind the book down. */
+    var sleepAuto: Boolean
+        get() = prefs.getBoolean(SLEEP_AUTO, false)
+        set(v) = prefs.edit().putBoolean(SLEEP_AUTO, v).apply()
+
+    /** Whether the sleep source with this key has been set up and tested. */
+    fun sleepSetUp(key: String): Boolean = prefs.getBoolean(SLEEP_SET_UP_PREFIX + key, false)
+
+    fun setSleepSetUp(key: String, on: Boolean) = prefs.edit().putBoolean(SLEEP_SET_UP_PREFIX + key, on).apply()
+
+    /** Whether the sleep source with this key is checked in the Auto list. */
     fun sleepSource(key: String): Boolean = prefs.getBoolean(SLEEP_PREFIX + key, false)
 
     fun setSleepSource(key: String, on: Boolean) = prefs.edit().putBoolean(SLEEP_PREFIX + key, on).apply()
@@ -75,5 +85,7 @@ class Settings(context: Context) {
         const val KEEP_SCREEN_ON = "keep_screen_on"
         const val MUSIC_DIR = "music_dir"
         const val SLEEP_PREFIX = "sleep_from_"
+        const val SLEEP_SET_UP_PREFIX = "sleep_set_up_"
+        const val SLEEP_AUTO = "sleep_auto"
     }
 }

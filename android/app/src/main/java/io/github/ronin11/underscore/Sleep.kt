@@ -13,8 +13,9 @@ import com.google.android.gms.location.SleepClassifyEvent
 import com.google.android.gms.location.SleepSegmentRequest
 
 /**
- * One way of knowing the listener fell asleep. Each source is a switch in
- * settings. When one is sure, it calls [Sleep.report], and the player
+ * One way of knowing the listener fell asleep. The listener sets each up
+ * from the Sleep button's Auto list, which tests it, and checks the ones to
+ * use. When one is sure, it calls [Sleep.report], and the player
  * winds down the same way whichever source it was. A new kind of sensor,
  * such as a watch or a bed, is a new source here, or another app that
  * sends [Sleep.ACTION_ASLEEP].
@@ -24,8 +25,12 @@ interface SleepSource {
     val key: String
     val title: String
     val summary: String
+    /** What setting it up involves, shown at the top of its setup screen. */
+    val howItWorks: String
     /** A permission the source needs before it can start, if any. */
     val permission: String? get() = null
+    /** False for a source that is planned but not built, shown greyed out. */
+    val available: Boolean get() = true
 
     /** Begin listening. Returns why it could not, or null. Safe to repeat. */
     fun start(context: Context): String?
@@ -46,13 +51,24 @@ object Sleep {
     const val EXTRA_SINCE = "since"
     const val EXTRA_SOURCE = "source"
 
-    val sources: List<SleepSource> = listOf(PhoneSleep, OtherAppsSleep)
+    val sources: List<SleepSource> = listOf(PhoneSleep, WatchSleep, OtherAppsSleep)
 
-    /** Start the sources that are switched on and stop the rest. */
+    /**
+     * While a setup screen tests a source, what any source hears goes here,
+     * with a line saying what it was, and not to the player. Main thread.
+     */
+    @Volatile var testing: ((SleepSource, String) -> Unit)? = null
+
+    /** Whether [source] may wind the book down: auto is on, and it is set up and checked. */
+    fun listening(settings: Settings, source: SleepSource): Boolean =
+        source.available && settings.sleepAuto && settings.sleepSetUp(source.key) && settings.sleepSource(source.key)
+
+    /** Start the sources that are listening and stop the rest. */
     fun apply(context: Context, settings: Settings): Map<String, String> {
         val problems = HashMap<String, String>()
         for (source in sources) {
-            if (settings.sleepSource(source.key)) {
+            if (!source.available) continue
+            if (listening(settings, source)) {
                 source.start(context)?.let { problems[source.key] = it }
             } else {
                 source.stop(context)
@@ -85,6 +101,11 @@ object PhoneSleep : SleepSource {
     override val key = "phone"
     override val title = "This phone"
     override val summary = "Google's guess from the phone's stillness and the room's light. Checks every 10 minutes."
+    override val howItWorks =
+        "Google's sleep API looks at how still the phone is and how dark the room is, and sends a " +
+            "reading every 10 minutes. Lying still in the dark looks a lot like sleep, so it takes " +
+            "two sure readings in a row, about 20 minutes. Leave the phone near you, on the bed or " +
+            "the nightstand.\n\nIt needs the physical activity permission."
     override val permission: String =
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) Manifest.permission.ACTIVITY_RECOGNITION
         else "com.google.android.gms.permission.ACTIVITY_RECOGNITION"
@@ -122,6 +143,9 @@ object PhoneSleep : SleepSource {
 
     /** The latest readings, newest last, for the bug report and for tuning [SURE]. */
     fun readings(context: Context): String = prefs(context).getString("readings", null) ?: "none yet"
+
+    /** The newest reading as one line, or null before the first. */
+    fun latest(context: Context): String? = prefs(context).getString("readings", null)?.lines()?.lastOrNull()
 
     /**
      * Take new readings. Returns when the listener fell asleep, the first
@@ -170,9 +194,29 @@ object PhoneSleep : SleepSource {
 object OtherAppsSleep : SleepSource {
     override val key = "apps"
     override val title = "Other apps"
-    override val summary = "Tasker, Home Assistant, a smart bed: any app that sends ${Sleep.ACTION_ASLEEP}."
+    override val summary = "Tasker, Home Assistant, a smart bed: any app that can send a broadcast."
+    override val howItWorks =
+        "Have the other app send this broadcast when you fall asleep:\n\n" +
+            "${Sleep.ACTION_ASLEEP}\n\n" +
+            "to the package io.github.ronin11.underscore. Two extras, both optional: " +
+            "\"${Sleep.EXTRA_SINCE}\", a long, the time you fell asleep in milliseconds since 1970, and " +
+            "\"${Sleep.EXTRA_SOURCE}\", a name for it. In Tasker that is a Send Intent action with " +
+            "Target set to Broadcast Receiver."
 
     override fun start(context: Context): String? = null
+
+    override fun stop(context: Context) {}
+}
+
+/** A Pixel Watch or other Wear OS watch. Needs a watch app that is not built yet. */
+object WatchSleep : SleepSource {
+    override val key = "watch"
+    override val title = "Watch"
+    override val summary = "A Wear OS watch such as a Pixel Watch. Needs a watch app, not built yet."
+    override val howItWorks = summary
+    override val available = false
+
+    override fun start(context: Context): String? = "not built yet"
 
     override fun stop(context: Context) {}
 }
@@ -181,17 +225,27 @@ object OtherAppsSleep : SleepSource {
 class SleepReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         val settings = Settings(context)
+        val test = Sleep.testing
         when {
             intent.action == Sleep.ACTION_ASLEEP -> {
-                if (!settings.sleepSource(OtherAppsSleep.key)) return
                 val since = intent.getLongExtra(Sleep.EXTRA_SINCE, 0).takeIf { it > 0 }
-                Sleep.report(context, since, intent.getStringExtra(Sleep.EXTRA_SOURCE) ?: "another app")
+                val from = intent.getStringExtra(Sleep.EXTRA_SOURCE) ?: "another app"
+                if (test != null) {
+                    val at = since?.let { ", asleep since " + java.text.DateFormat.getTimeInstance().format(java.util.Date(it)) } ?: ""
+                    test(OtherAppsSleep, "Heard from $from$at")
+                    return
+                }
+                if (!Sleep.listening(settings, OtherAppsSleep)) return
+                Sleep.report(context, since, from)
             }
             SleepClassifyEvent.hasEvents(intent) -> {
-                if (!settings.sleepSource(PhoneSleep.key)) return
-                PhoneSleep.heard(context, SleepClassifyEvent.extractEvents(intent))?.let {
-                    Sleep.report(context, it, "this phone")
+                val asleep = PhoneSleep.heard(context, SleepClassifyEvent.extractEvents(intent))
+                if (test != null) {
+                    test(PhoneSleep, "Reading: ${PhoneSleep.latest(context)}")
+                    return
                 }
+                if (!Sleep.listening(settings, PhoneSleep)) return
+                asleep?.let { Sleep.report(context, it, "this phone") }
             }
         }
     }

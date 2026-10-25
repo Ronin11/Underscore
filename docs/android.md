@@ -165,9 +165,17 @@ with -6; `crates/transcribe` sets the raw callback instead.
 
 ## Falling asleep
 
-Settings, Falling asleep has a switch for each way of noticing that the
-listener fell asleep. Each is a `SleepSource` in `Sleep.kt`. When one is
-sure, and the book is playing, the service marks where in the book sleep
+The Sleep button offers Auto, Manual, and Off. Manual holds the timers.
+Auto lists the ways of noticing sleep that have been set up, each with a
+check box, and Add… at the bottom. Add lists every kind of source; picking
+one opens its setup, which says what it needs, asks for any permission,
+and tests it live. While a setup is open the source's reports go to that
+screen, not the player, so a test never pauses the book. Choosing a timer
+turns Auto off, and turning Auto on clears a timer.
+
+Each kind is a `SleepSource` in `Sleep.kt`; `SleepSetup.kt` is the Auto
+list and the setup screens. When a checked source is sure, Auto is on, and
+the book is playing, the service marks where in the book sleep
 began, plays a minute more, fades and pauses. The Sleep button then offers
 "Back to where I fell asleep". The mark is two minutes before the time the
 source gives, or ten minutes back when it gives none, since nothing can
@@ -184,15 +192,19 @@ tell the moment someone drifts off.
   Two extras, both optional: `since`, a long, the wall-clock time in
   milliseconds the listener fell asleep, and `source`, a string for the
   bug report. Tasker, Home Assistant's companion app, or a smart bed's app
-  can send it. It does nothing unless that switch is on.
+  can send it. It does nothing unless it is set up and checked under Auto.
+  Its setup has a button that sends a test from the phone itself.
+- **Watch.** Listed but greyed out: it needs a Wear OS app on the watch,
+  which is not built yet.
 
   ```
   adb shell am broadcast -a io.github.ronin11.underscore.ASLEEP \
     -n io.github.ronin11.underscore/.SleepReceiver --es source test
   ```
 
-A new kind of sensor, such as a watch app, is a new `SleepSource` added to
-`Sleep.sources`, or simply another app sending the broadcast.
+A new kind of sensor is a new `SleepSource` added to `Sleep.sources`, with
+its setup steps in `SleepSetup`, or simply another app sending the
+broadcast.
 
 ## Storage
 

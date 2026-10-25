@@ -940,7 +940,7 @@ class PlaybackService : Service() {
             appendLine("music server: ${musicServerUrl ?: "none"}, signed in ${engine.hasMusicServer}, busy ${musicServerBusy ?: "no"}")
             appendLine("server: ${serverUrl ?: "none"}, signed in ${engine.hasServer}, busy ${serverBusy ?: "no"}")
             appendLine("session: active ${session.isActive}")
-            appendLine("sleep: sources ${Sleep.sources.filter { settings.sleepSource(it.key) }.joinToString { it.key }.ifEmpty { "none" }}, last ${lastAsleep ?: "none"}, dozed at $dozedAtMs")
+            appendLine("sleep: auto ${settings.sleepAuto}, listening ${Sleep.sources.filter { Sleep.listening(settings, it) }.joinToString { it.key }.ifEmpty { "none" }}, last ${lastAsleep ?: "none"}, dozed at $dozedAtMs")
             appendLine("sleep: phone readings:\n${PhoneSleep.readings(this@PlaybackService)}")
             if (state == null) {
                 appendLine("playback state: none")

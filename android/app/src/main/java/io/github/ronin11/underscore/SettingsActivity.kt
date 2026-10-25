@@ -45,36 +45,12 @@ class SettingsActivity : ServiceActivity() {
     private val askAudioRead = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         if (!granted) toast("Without audio access the music folder cannot be read")
     }
-    private val sleepSwitches = LinkedHashMap<String, SwitchCompat>()
-    /** The sleep source waiting on its permission. */
-    private var sleepAsking: SleepSource? = null
-    private val askSleepPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-        val source = sleepAsking ?: return@registerForActivityResult
-        sleepAsking = null
-        if (granted) setSleepSource(source, true) else toast("${source.title} needs that permission to notice sleep")
-        refresh()
-    }
-
-    /** Switch a sleep source on or off, asking for its permission first. */
-    private fun setSleepSource(source: SleepSource, on: Boolean) {
-        val permission = source.permission
-        if (on && permission != null && ContextCompat.checkSelfPermission(this, permission) != PackageManager.PERMISSION_GRANTED) {
-            sleepAsking = source
-            askSleepPermission.launch(permission)
-            return
-        }
-        settings.setSleepSource(source.key, on)
-        // The service starts and stops the source when the setting changes.
-        val problem = service?.applySleepSources()?.get(source.key)
-        if (problem != null) toast("${source.title}: $problem")
-    }
 
     override fun refresh() {
         skipBack.summary = "${settings.skipBackSec} seconds"
         skipForward.summary = "${settings.skipForwardSec} seconds"
         if (!rewind.isPressed) rewind.isChecked = settings.rewindOnResume
         if (!keepScreen.isPressed) keepScreen.isChecked = settings.keepScreenOn
-        for ((key, toggle) in sleepSwitches) if (!toggle.isPressed) toggle.isChecked = settings.sleepSource(key)
         if (!musicLevel.isPressed) musicLevel.progress = settings.musicLevel
         musicLevelValue.text = "${settings.musicLevel}%"
         musicFolder.summary = settings.musicDir ?: "Not set. Used when no music server is signed in."
@@ -282,21 +258,6 @@ class SettingsActivity : ServiceActivity() {
         ) { settings.keepScreenOn = it }
         keepScreen = keepSwitch
         list.addView(keepRow)
-
-        list.addView(divider())
-        list.addView(heading("Falling asleep"))
-        list.addView(
-            row(
-                "When one of these says you fell asleep",
-                "The book plays a minute more, fades and pauses. The Sleep button then offers to go back to where you drifted off.",
-                null,
-            ).view,
-        )
-        for (source in Sleep.sources) {
-            val (sourceRow, sourceSwitch) = switchRow(source.title, source.summary) { on -> setSleepSource(source, on) }
-            sleepSwitches[source.key] = sourceSwitch
-            list.addView(sourceRow)
-        }
 
         list.addView(divider())
         list.addView(heading("Music"))
