@@ -29,7 +29,7 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
-pub use abs::{Audiobookshelf, Credentials, OpenIdStart};
+pub use abs::{Audiobookshelf, Credentials, OpenIdStart, ShelfBook};
 pub use cache::Cache;
 pub use conductor::{Conductor, Direction, Resolution};
 pub use local::LocalLibrary;

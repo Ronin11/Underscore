@@ -103,8 +103,32 @@ class PlaybackService : Service() {
     private val prefs by lazy { getSharedPreferences("server", Context.MODE_PRIVATE) }
     private val musicPrefs by lazy { getSharedPreferences("music_server", Context.MODE_PRIVATE) }
 
-    /** One book on the server, as the list shows it. */
-    data class ServerBook(val id: String, val title: String, val author: String, val durationMs: Long)
+    /**
+     * One book on the server, as the book list shows it. [progress] runs
+     * 0 to 1 and is negative when the book was never started; [files] is
+     * 0 when the server did not say. Times are milliseconds since 1970.
+     */
+    data class ServerBook(
+        val id: String,
+        val title: String,
+        val author: String,
+        val series: String,
+        val durationMs: Long,
+        val addedMs: Long,
+        val files: Int,
+        val coverUrl: String?,
+        val progress: Double,
+        val finished: Boolean,
+        val playedMs: Long,
+        val open: Boolean,
+    ) {
+        /** Split across files, which does not play yet. */
+        val playable: Boolean get() = files <= 1
+    }
+
+    /** The last book list, so the book screen opens on something. */
+    @Volatile var serverBookList: List<ServerBook>? = null
+        private set
 
     // What the session and notification last showed, to publish only on change.
     private var shownPlaying = false
@@ -431,6 +455,7 @@ class PlaybackService : Service() {
     /** Sign out and forget the saved tokens. */
     fun serverForget() {
         engine.serverForget()
+        serverBookList = null
         prefs.edit().clear().apply()
     }
 
@@ -474,11 +499,29 @@ class PlaybackService : Service() {
                 if (o.has("error")) {
                     problem = o.getString("error")
                 } else {
+                    val base = o.optString("base")
                     val arr = o.getJSONArray("books")
                     for (i in 0 until arr.length()) {
                         val b = arr.getJSONObject(i)
-                        books.add(ServerBook(b.getString("id"), b.getString("title"), b.getString("author"), b.getLong("durationMs")))
+                        val id = b.getString("id")
+                        books.add(
+                            ServerBook(
+                                id = id,
+                                title = b.getString("title"),
+                                author = b.optString("author"),
+                                series = b.optString("series"),
+                                durationMs = b.optLong("durationMs", -1),
+                                addedMs = b.optLong("addedMs"),
+                                files = b.optInt("files"),
+                                coverUrl = if (b.optBoolean("cover") && base.isNotEmpty()) "$base/api/items/$id/cover?width=240" else null,
+                                progress = b.optDouble("progress", -1.0),
+                                finished = b.optBoolean("finished"),
+                                playedMs = b.optLong("playedMs"),
+                                open = b.optBoolean("open"),
+                            ),
+                        )
                     }
+                    serverBookList = books
                 }
             } catch (e: Exception) {
                 problem = "unreadable answer from the server: $e"

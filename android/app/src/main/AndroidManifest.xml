@@ -38,6 +38,13 @@
             android:parentActivityName=".MainActivity" />
 
         <activity
+            android:name=".BooksActivity"
+            android:exported="false"
+            android:label="Books"
+            android:parentActivityName=".MainActivity"
+            android:windowSoftInputMode="stateHidden|adjustResize" />
+
+        <activity
             android:name=".DebugActivity"
             android:exported="false"
             android:label="Debug"

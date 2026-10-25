@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Which book a recycled cover view is showing, so a late cover lands on the right row. -->
+    <item name="cover_book" type="id" />
+</resources>

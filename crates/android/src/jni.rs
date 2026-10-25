@@ -24,7 +24,7 @@ use jni::objects::{JFloatArray, JObject, JString};
 use jni::sys::{JNI_FALSE, JNI_TRUE, jboolean, jfloat, jint, jlong, jstring};
 
 use underscore_decode::Chapter;
-use underscore_library::{Cache, Credentials, ItemId, Library, Role, SubsonicLogin};
+use underscore_library::{Cache, Credentials, ItemId, Library, SubsonicLogin};
 
 use crate::{Bridge, hint_for_mime};
 
@@ -782,26 +782,32 @@ pub extern "system" fn Java_io_github_ronin11_underscore_Engine_nativeServerBook
     handle: jlong,
 ) -> jstring {
     let answer = |v: serde_json::Value| jstr(&env, &v.to_string());
-    let Some(server) = with(handle, None, |b| b.server()) else {
+    let Some((server, open)) = with(handle, None, |b| b.server().map(|s| (s, b.server_book())))
+    else {
         return answer(serde_json::json!({ "error": "not signed in" }));
     };
-    let books = server
-        .refresh_items()
-        .and_then(|_| server.items(Role::Speech));
-    match books {
+    match server.shelf() {
         Ok(books) => {
             let list: Vec<serde_json::Value> = books
                 .iter()
                 .map(|b| {
                     serde_json::json!({
-                        "id": b.id.0,
-                        "title": b.title,
-                        "author": b.artist.clone().unwrap_or_default(),
-                        "durationMs": b.duration.map_or(-1, to_ms),
+                        "id": b.item.id.0,
+                        "title": b.item.title,
+                        "author": b.item.artist.clone().unwrap_or_default(),
+                        "series": b.item.album.clone().unwrap_or_default(),
+                        "durationMs": b.item.duration.map_or(-1, to_ms),
+                        "addedMs": b.added_ms.unwrap_or(0),
+                        "files": b.files.unwrap_or(0),
+                        "cover": b.has_cover,
+                        "progress": b.progress.unwrap_or(-1.0),
+                        "finished": b.finished,
+                        "playedMs": b.played_ms.unwrap_or(0),
+                        "open": open.as_ref() == Some(&b.item.id),
                     })
                 })
                 .collect();
-            answer(serde_json::json!({ "books": list }))
+            answer(serde_json::json!({ "books": list, "base": server.base() }))
         }
         Err(e) => answer(serde_json::json!({ "error": e.to_string() })),
     }

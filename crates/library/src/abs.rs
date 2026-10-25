@@ -73,6 +73,8 @@ pub struct Audiobookshelf {
     auth: Mutex<Credentials>,
     /// The last listing, so `item` and `search` need no round trip.
     books: RwLock<Vec<Item>>,
+    /// What the last listing said beyond each [`Item`], for [`Self::shelf`].
+    listed: RwLock<HashMap<ItemId, Listed>>,
     /// The audio file behind each book, learned when the book is opened.
     files: RwLock<HashMap<ItemId, AudioFile>>,
 }
@@ -84,6 +86,35 @@ impl std::fmt::Debug for Audiobookshelf {
             .field("base", &self.base)
             .finish_non_exhaustive()
     }
+}
+
+/// One book as a book list shows it: the [`Item`], plus what the
+/// listing and the listener's own progress say about it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ShelfBook {
+    /// The book. `album` holds the series, with its number when known.
+    pub item: Item,
+    /// When the book reached the server, in milliseconds since 1970.
+    pub added_ms: Option<u64>,
+    /// How many audio files hold the book, when the server says. Only
+    /// single-file books play for now.
+    pub files: Option<usize>,
+    /// Whether the server has a cover for it.
+    pub has_cover: bool,
+    /// How far the listener is, from 0 to 1. `None` when never started.
+    pub progress: Option<f64>,
+    /// The listener marked it finished, or reached the end.
+    pub finished: bool,
+    /// When the listener last played it, in milliseconds since 1970.
+    pub played_ms: Option<u64>,
+}
+
+/// What a listing says about a book beyond its [`Item`].
+#[derive(Debug, Clone, Copy, Default)]
+struct Listed {
+    added_ms: Option<u64>,
+    files: Option<usize>,
+    has_cover: bool,
 }
 
 /// Where a book's audio is on the server.
@@ -267,6 +298,7 @@ impl Audiobookshelf {
             agent,
             auth: Mutex::new(creds),
             books: RwLock::new(Vec::new()),
+            listed: RwLock::new(HashMap::new()),
             files: RwLock::new(HashMap::new()),
         }
     }
@@ -304,6 +336,7 @@ impl Audiobookshelf {
         let mut resp = self.get("/api/libraries")?;
         let libs: Libraries = read_json(&mut resp, "GET /api/libraries")?;
         let mut books = Vec::new();
+        let mut listed = HashMap::new();
         for lib in libs
             .libraries
             .into_iter()
@@ -312,15 +345,78 @@ impl Audiobookshelf {
             let path = format!("/api/libraries/{}/items?limit=0&page=0", lib.id);
             let mut resp = self.get(&path)?;
             let page: ItemsPage = read_json(&mut resp, "GET /api/libraries/{id}/items")?;
-            books.extend(page.results.into_iter().filter_map(LibraryItem::into_item));
+            for li in page.results.into_iter().filter(|li| !li.is_missing) {
+                let extra = Listed {
+                    added_ms: li.added_at,
+                    files: li.media.num_audio_files,
+                    has_cover: li
+                        .media
+                        .cover_path
+                        .as_deref()
+                        .is_some_and(|c| !c.is_empty()),
+                };
+                if let Some(item) = li.into_item() {
+                    listed.insert(item.id.clone(), extra);
+                    books.push(item);
+                }
+            }
         }
         books.sort_by(|a, b| a.title.cmp(&b.title));
         let n = books.len();
+        *self
+            .listed
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = listed;
         *self
             .books
             .write()
             .unwrap_or_else(std::sync::PoisonError::into_inner) = books;
         Ok(n)
+    }
+
+    /// Every book, fetched fresh, with where the listener is in each.
+    /// Two round trips plus one per book library: the listing and the
+    /// listener's progress.
+    ///
+    /// # Errors
+    /// The server could not be reached or the credentials are refused.
+    pub fn shelf(&self) -> Result<Vec<ShelfBook>, Error> {
+        self.refresh_items()?;
+        let mut resp = self.get("/api/me")?;
+        let me: Me = read_json(&mut resp, "GET /api/me")?;
+        let progress: HashMap<String, ServerProgress> = me
+            .media_progress
+            .into_iter()
+            .filter(|p| p.episode_id.is_none())
+            .filter_map(|p| Some((p.library_item_id.clone()?, p)))
+            .collect();
+        let books = self
+            .books
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
+        let listed = self
+            .listed
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        Ok(books
+            .into_iter()
+            .map(|item| {
+                let extra = listed.get(&item.id).copied().unwrap_or_default();
+                let p = progress.get(&item.id.0);
+                ShelfBook {
+                    added_ms: extra.added_ms,
+                    files: extra.files,
+                    has_cover: extra.has_cover,
+                    progress: p
+                        .filter(|p| p.progress > 0.0 || p.current_time > 0.0)
+                        .map(|p| p.progress.clamp(0.0, 1.0)),
+                    finished: p.is_some_and(|p| p.is_finished),
+                    played_ms: p.and_then(|p| p.last_update),
+                    item,
+                }
+            })
+            .collect())
     }
 
     /// Ask the server for everything about one book, and remember which
@@ -611,8 +707,28 @@ impl User {
 }
 
 #[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct Me {
     username: String,
+    #[serde(default)]
+    media_progress: Vec<ServerProgress>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ServerProgress {
+    #[serde(default)]
+    library_item_id: Option<String>,
+    #[serde(default)]
+    episode_id: Option<String>,
+    #[serde(default)]
+    progress: f64,
+    #[serde(default)]
+    current_time: f64,
+    #[serde(default)]
+    is_finished: bool,
+    #[serde(default)]
+    last_update: Option<u64>,
 }
 
 #[derive(Deserialize)]
@@ -641,6 +757,10 @@ struct LibraryItem {
     media_type: String,
     #[serde(default)]
     media: Media,
+    #[serde(default)]
+    added_at: Option<u64>,
+    #[serde(default)]
+    is_missing: bool,
 }
 
 #[derive(Deserialize, Default)]
@@ -656,6 +776,10 @@ struct Media {
     chapters: Vec<ServerChapter>,
     #[serde(default)]
     audio_files: Vec<ServerAudioFile>,
+    #[serde(default)]
+    num_audio_files: Option<usize>,
+    #[serde(default)]
+    cover_path: Option<String>,
 }
 
 #[derive(Deserialize, Default)]
@@ -969,6 +1093,66 @@ mod tests {
         abs.report_progress(&"li1".into(), Duration::from_secs(30))
             .unwrap();
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// The shelf joins the listing with the listener's progress, and
+    /// leaves out books the server has lost.
+    #[test]
+    fn shelf_has_progress_covers_and_file_counts() {
+        let (base, _) = serve(|r| match (r.method.as_str(), r.path.as_str()) {
+            ("GET", "/api/libraries") => json(
+                200,
+                serde_json::json!({ "libraries": [{ "id": "lib1", "mediaType": "book" }] }),
+            ),
+            ("GET", "/api/libraries/lib1/items?limit=0&page=0") => {
+                let mut a = book("li1", "Started", 0);
+                a["addedAt"] = 1_700_000_000_000u64.into();
+                a["media"]["numAudioFiles"] = 1.into();
+                a["media"]["coverPath"] = "/covers/li1.jpg".into();
+                let mut b = book("li2", "Untouched", 0);
+                b["media"]["numAudioFiles"] = 4.into();
+                let mut c = book("li3", "Gone", 0);
+                c["isMissing"] = true.into();
+                let d = book("li4", "Done", 0);
+                json(200, serde_json::json!({ "results": [a, b, c, d] }))
+            }
+            ("GET", "/api/me") => json(
+                200,
+                serde_json::json!({ "username": "nate", "mediaProgress": [
+                    { "libraryItemId": "li1", "progress": 0.25, "currentTime": 900.0,
+                      "isFinished": false, "lastUpdate": 1_710_000_000_000u64 },
+                    { "libraryItemId": "li4", "progress": 1.0, "currentTime": 3600.0,
+                      "isFinished": true },
+                    { "libraryItemId": "li2", "episodeId": "ep1", "progress": 0.5 }
+                ] }),
+            ),
+            _ => json(404, serde_json::json!({})),
+        });
+        let abs = Audiobookshelf::with_credentials(
+            "abs",
+            &base,
+            Credentials {
+                access: "acc".into(),
+                refresh: None,
+            },
+        );
+        let shelf = abs.shelf().unwrap();
+        let titles: Vec<_> = shelf.iter().map(|b| b.item.title.as_str()).collect();
+        assert_eq!(titles, ["Done", "Started", "Untouched"]);
+        let done = &shelf[0];
+        assert!(done.finished);
+        assert_eq!(done.progress, Some(1.0));
+        let started = &shelf[1];
+        assert_eq!(started.progress, Some(0.25));
+        assert_eq!(started.played_ms, Some(1_710_000_000_000));
+        assert_eq!(started.added_ms, Some(1_700_000_000_000));
+        assert_eq!(started.files, Some(1));
+        assert!(started.has_cover);
+        // Podcast episode progress is not the book's.
+        let untouched = &shelf[2];
+        assert_eq!(untouched.progress, None);
+        assert_eq!(untouched.files, Some(4));
+        assert!(!untouched.has_cover);
     }
 
     /// An expired access token is renewed with the refresh token, once,

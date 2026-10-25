@@ -36,7 +36,8 @@ android/         Gradle project. Engine.kt (JNI wrapper), PlaybackService.kt
                  (foreground service, AudioTrack render thread, media session,
                  audio focus), Settings.kt (the preferences the service applies
                  to the engine), ServiceActivity.kt (what the screens share),
-                 MainActivity.kt (the player), SettingsActivity.kt,
+                 MainActivity.kt (the player), BooksActivity.kt (the server's
+                 books), SettingsActivity.kt,
                  DebugActivity.kt, BugReport.kt. UI built in code, no layout
                  XML; icons are vector drawables under res/drawable.
 .github/         ci.yml (fmt, clippy, test) and android.yml (APK pre-release).

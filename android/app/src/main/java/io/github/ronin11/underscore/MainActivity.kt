@@ -313,42 +313,14 @@ class MainActivity : ServiceActivity() {
         menu.show()
     }
 
-    /** The server's books; picking one downloads and loads it. */
+    /** The server's books, on their own screen; without a server, the sign-in. */
     private fun serverBooks() {
         val s = service ?: return
         if (!s.engine.hasServer) {
             serverDialog()
             return
         }
-        s.serverBooks { books, problem ->
-            if (books == null) {
-                toast(problem ?: "No books")
-                return@serverBooks
-            }
-            if (books.isEmpty()) {
-                toast("The server has no books this account can see")
-                return@serverBooks
-            }
-            val items = Array(books.size) { i ->
-                val b = books[i]
-                val length = if (b.durationMs > 0) "  ${fmt(b.durationMs)}" else ""
-                if (b.author.isEmpty()) "${b.title}$length" else "${b.title}\n${b.author}$length"
-            }
-            AlertDialog.Builder(this)
-                .setTitle("Books on ${s.serverUrl}")
-                .setItems(items) { _, which ->
-                    val book = books[which]
-                    toast("Downloading ${book.title}…", long = false)
-                    s.openServerBook(book) { problem ->
-                        toast(problem ?: "Loaded ${book.title}")
-                        refresh()
-                    }
-                    refresh()
-                }
-                .setNegativeButton("Cancel", null)
-                .show()
-        }
-        refresh()
+        startActivity(Intent(this, BooksActivity::class.java))
     }
 
     /** One of the tools along the bottom: a small caption over a value. */

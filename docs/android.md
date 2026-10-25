@@ -78,8 +78,15 @@ those tags. The server's address has to be reachable from the phone: a
 "Audiobookshelf server" under the library menu, or the Server row in
 Settings, asks for the address, username, and password of an
 Audiobookshelf server and signs in; the tokens are kept in the app's
-private preferences and the password is not. "Server books" lists every
-book the account can see. Picking one downloads its file into the app's
+private preferences and the password is not. "Server books" opens the book
+screen: every book the account can see, with its cover, author, series,
+and how far the listener is. A search box matches title, author, and
+series; a row of filters picks all, in progress, not started, or
+finished; Sort orders by last played, recently added, title, author, or
+series in reading order. Books split across many files are shown dimmed,
+since only single-file books play for now. Covers come from the server,
+which serves them without a login, and are kept in the app's cache.
+Picking a book downloads its file into the app's
 cache, the same per-stream cache the maps use, loads it, and jumps to
 where the server says the listener was. From then on the app reports
 the position back every half minute while playing and whenever it
