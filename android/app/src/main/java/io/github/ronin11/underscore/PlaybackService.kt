@@ -214,7 +214,8 @@ class PlaybackService : Service() {
         engine = Engine(SAMPLE_RATE, CHANNELS)
         settings = Settings(this)
         settings.applyTo(engine)
-        settingsListener = settings.listen { settings.applyTo(engine) }
+        settingsListener = settings.listen { settings.applyTo(engine); applySleepSources() }
+        applySleepSources()
         audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
         createSession()
         createChannel()
@@ -241,6 +242,10 @@ class PlaybackService : Service() {
             ACTION_BACK -> skipBack()
             ACTION_FORWARD -> skipForward()
             ACTION_OPENID_RETURN -> intent.data?.let { serverOpenIdFinish(it) }
+            ACTION_ASLEEP -> asleep(
+                intent.getLongExtra(Sleep.EXTRA_SINCE, 0).takeIf { it > 0 },
+                intent.getStringExtra(Sleep.EXTRA_SOURCE) ?: "unknown",
+            )
         }
         return START_STICKY
     }
@@ -659,6 +664,46 @@ class PlaybackService : Service() {
         }
     }
 
+    /** Where in the open book the listener probably fell asleep, or -1. */
+    val dozedAtMs: Long get() = last.getLong("dozedAtMs", -1)
+
+    /** The last sleep report and what came of it, for the bug report. */
+    @Volatile var lastAsleep: String? = null
+        private set
+
+    /** Start and stop the sleep sources to match the settings. */
+    fun applySleepSources(): Map<String, String> = Sleep.apply(this, settings)
+
+    /**
+     * A sleep source says the listener fell asleep at [sinceWallMs], or
+     * just now when that is unknown. Mark where in the book that was,
+     * with a little to spare, and wind down. Nothing happens unless the
+     * book is playing.
+     */
+    private fun asleep(sinceWallMs: Long?, source: String) {
+        val wall = System.currentTimeMillis()
+        val heard = "$source at ${java.util.Date(wall)}" + (sinceWallMs?.let { ", asleep since ${java.util.Date(it)}" } ?: "")
+        if (!engine.isPlaying) {
+            lastAsleep = "$heard; not playing, ignored"
+            return
+        }
+        // Book time runs at the playback speed.
+        val slept = sinceWallMs?.let { ((wall - it).coerceIn(0, ASLEEP_MAX_BACK_MS) * engine.speed).toLong() } ?: ASLEEP_UNKNOWN_BACK_MS
+        val at = (engine.positionMs - slept - ASLEEP_MARGIN_MS).coerceAtLeast(0)
+        last.edit().putLong("dozedAtMs", at).apply()
+        engine.setSleepMs(ASLEEP_WIND_DOWN_MS, now())
+        lastAsleep = "$heard; marked $at ms, winding down"
+        publishState()
+    }
+
+    /** Back to where the listener fell asleep, and forget the mark. */
+    fun backToDozed() {
+        val at = dozedAtMs
+        if (at < 0) return
+        last.edit().remove("dozedAtMs").apply()
+        seekMs(at)
+    }
+
     /** Remember where the listener is in the current book. */
     private fun savePosition() {
         lastSaveMs = now()
@@ -674,10 +719,12 @@ class PlaybackService : Service() {
     private fun rememberBook(key: String, fields: android.content.SharedPreferences.Editor.() -> Unit) {
         val same = last.getString("key", null) == key
         val map = last.getString("map", null)
+        val dozed = last.getLong("dozedAtMs", -1)
         last.edit().clear().apply {
             fields()
             putString("key", key)
             if (same && map != null) putString("map", map)
+            if (same && dozed >= 0) putLong("dozedAtMs", dozed)
         }.commit()
         if (!same && (mapName != null || engine.hasMap)) clearMap()
     }
@@ -893,6 +940,8 @@ class PlaybackService : Service() {
             appendLine("music server: ${musicServerUrl ?: "none"}, signed in ${engine.hasMusicServer}, busy ${musicServerBusy ?: "no"}")
             appendLine("server: ${serverUrl ?: "none"}, signed in ${engine.hasServer}, busy ${serverBusy ?: "no"}")
             appendLine("session: active ${session.isActive}")
+            appendLine("sleep: sources ${Sleep.sources.filter { settings.sleepSource(it.key) }.joinToString { it.key }.ifEmpty { "none" }}, last ${lastAsleep ?: "none"}, dozed at $dozedAtMs")
+            appendLine("sleep: phone readings:\n${PhoneSleep.readings(this@PlaybackService)}")
             if (state == null) {
                 appendLine("playback state: none")
             } else {
@@ -1103,6 +1152,16 @@ class PlaybackService : Service() {
         private const val ACTION_FORWARD = "io.github.ronin11.underscore.FORWARD"
         /** The browser came back from a single sign-on; the intent's data is the address. */
         const val ACTION_OPENID_RETURN = "io.github.ronin11.underscore.OPENID_RETURN"
+        /** A sleep source heard the listener fall asleep. Extras as [Sleep.ACTION_ASLEEP]. */
+        const val ACTION_ASLEEP = "io.github.ronin11.underscore.SERVICE_ASLEEP"
+        /** Fall-asleep times further back than this are not believed. */
+        private const val ASLEEP_MAX_BACK_MS = 90 * 60_000L
+        /** How far back to mark when a source does not say when sleep began. */
+        private const val ASLEEP_UNKNOWN_BACK_MS = 10 * 60_000L
+        /** Listeners drift off a little before any sensor can tell. */
+        private const val ASLEEP_MARGIN_MS = 2 * 60_000L
+        /** Play this much more, fading at the end, then pause. */
+        private const val ASLEEP_WIND_DOWN_MS = 60_000L
         private const val SAVE_EVERY_MS = 15_000L
         private const val ACTIONS =
             PlaybackStateCompat.ACTION_PLAY or

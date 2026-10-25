@@ -41,6 +41,11 @@ class Settings(context: Context) {
         get() = prefs.getString(MUSIC_DIR, null)
         set(v) = prefs.edit().putString(MUSIC_DIR, v).apply()
 
+    /** Whether the sleep source with this key may wind the book down. All start off. */
+    fun sleepSource(key: String): Boolean = prefs.getBoolean(SLEEP_PREFIX + key, false)
+
+    fun setSleepSource(key: String, on: Boolean) = prefs.edit().putBoolean(SLEEP_PREFIX + key, on).apply()
+
     /** Push every engine-side setting into [engine]. Cheap; safe to repeat. */
     fun applyTo(engine: Engine) {
         engine.setSkipMs(skipBackSec * 1000L, skipForwardSec * 1000L)
@@ -69,5 +74,6 @@ class Settings(context: Context) {
         const val MUSIC_LEVEL = "music_level"
         const val KEEP_SCREEN_ON = "keep_screen_on"
         const val MUSIC_DIR = "music_dir"
+        const val SLEEP_PREFIX = "sleep_from_"
     }
 }

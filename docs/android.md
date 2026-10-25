@@ -163,6 +163,37 @@ Note that whisper-rs 0.16's `set_abort_callback_safe` passes whisper.cpp a
 pointer of the wrong type, which reads as "abort" and fails the encoder
 with -6; `crates/transcribe` sets the raw callback instead.
 
+## Falling asleep
+
+Settings, Falling asleep has a switch for each way of noticing that the
+listener fell asleep. Each is a `SleepSource` in `Sleep.kt`. When one is
+sure, and the book is playing, the service marks where in the book sleep
+began, plays a minute more, fades and pauses. The Sleep button then offers
+"Back to where I fell asleep". The mark is two minutes before the time the
+source gives, or ten minutes back when it gives none, since nothing can
+tell the moment someone drifts off.
+
+- **This phone.** Google's sleep API sends a reading every ten minutes,
+  from how still the phone is and how dark the room is. Lying still in the
+  dark while listening looks a lot like sleep, so it takes two readings in
+  a row at 85 out of 100 or more. The bug report lists the latest readings,
+  which is how to tune that. It needs the physical activity permission and
+  Google Play services.
+- **Other apps.** Any app can send the broadcast
+  `io.github.ronin11.underscore.ASLEEP` to `io.github.ronin11.underscore`.
+  Two extras, both optional: `since`, a long, the wall-clock time in
+  milliseconds the listener fell asleep, and `source`, a string for the
+  bug report. Tasker, Home Assistant's companion app, or a smart bed's app
+  can send it. It does nothing unless that switch is on.
+
+  ```
+  adb shell am broadcast -a io.github.ronin11.underscore.ASLEEP \
+    -n io.github.ronin11.underscore/.SleepReceiver --es source test
+  ```
+
+A new kind of sensor, such as a watch app, is a new `SleepSource` added to
+`Sleep.sources`, or simply another app sending the broadcast.
+
 ## Storage
 
 Server books and map music are cached under the app's cache folder,

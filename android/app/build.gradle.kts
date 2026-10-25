@@ -77,4 +77,6 @@ dependencies {
     implementation("androidx.activity:activity-ktx:1.9.3")
     // MediaSessionCompat and the media-style notification.
     implementation("androidx.media:media:1.7.0")
+    // Google's sleep API, for the phone's own guess that the listener fell asleep.
+    implementation("com.google.android.gms:play-services-location:21.3.0")
 }

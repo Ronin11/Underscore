@@ -302,6 +302,12 @@ class MainActivity : ServiceActivity() {
                 e.extendSleepMs(10 * 60_000L, s.now()); refresh(); true
             }
         }
+        val dozed = s.dozedAtMs
+        if (dozed >= 0) {
+            menu.menu.add("Back to where I fell asleep (${fmt(dozed)})").setOnMenuItemClickListener {
+                s.backToDozed(); refresh(); true
+            }
+        }
         menu.show()
     }
 
