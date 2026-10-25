@@ -267,8 +267,10 @@ class WatchListener : com.google.android.gms.wearable.WearableListenerService() 
                     if (listener != null) {
                         val at = since?.let { ", asleep since " + java.text.DateFormat.getTimeInstance().format(java.util.Date(it)) } ?: ""
                         listener(WatchSleep, (if (test) "Test from " else "Heard from ") + from + at)
-                    } else if (!test && Sleep.listening(Settings(this), WatchSleep)) {
-                        Sleep.report(this, since, from)
+                    } else if (Sleep.listening(Settings(this), WatchSleep)) {
+                        // Outside setup a test winds down for real, so the whole
+                        // chain can be tried before bed. Only while a book plays.
+                        Sleep.report(this, since, if (test) "$from (test)" else from)
                     }
                 }
             }

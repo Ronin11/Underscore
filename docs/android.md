@@ -202,7 +202,9 @@ tell the moment someone drifts off.
   the watch app shares both with the phone app. Its setup on the phone
   finds the watch, asks it how it stands (on or off, permission, whether
   this watch offers the asleep state at all), and shows the watch's test
-  button's report.
+  button's report. Outside that screen, with Auto on and a book playing,
+  the test button winds the book down for real, to try the whole chain
+  before bed.
 
   ```
   adb shell am broadcast -a io.github.ronin11.underscore.ASLEEP \
