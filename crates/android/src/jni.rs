@@ -20,8 +20,8 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use jni::JNIEnv;
-use jni::objects::{JFloatArray, JObject, JString};
-use jni::sys::{JNI_FALSE, JNI_TRUE, jboolean, jfloat, jint, jlong, jstring};
+use jni::objects::{JByteArray, JFloatArray, JObject, JString};
+use jni::sys::{JNI_FALSE, JNI_TRUE, jboolean, jbyteArray, jfloat, jint, jlong, jstring};
 
 use underscore_decode::Chapter;
 use underscore_library::{Cache, Credentials, Download, ItemId, Library, Opened, SubsonicLogin};
@@ -1042,6 +1042,59 @@ pub extern "system" fn Java_io_github_ronin11_underscore_Engine_nativeTranscribe
     _handle: jlong,
 ) -> jstring {
     jstr(&env, &crate::transcript::status().to_string())
+}
+
+/// The file called `name` beside server book `id`, such as its music map
+/// or transcript, or null when there is none or the server could not say.
+/// Network I/O: call it from a background thread.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_io_github_ronin11_underscore_Engine_nativeServerCompanion(
+    mut env: JNIEnv,
+    _this: JObject,
+    handle: jlong,
+    id: JString,
+    name: JString,
+) -> jbyteArray {
+    let (Some(id), Some(name)) = (string(&mut env, &id), string(&mut env, &name)) else {
+        return std::ptr::null_mut();
+    };
+    // Only the client comes out from under the lock; the fetch runs outside it.
+    let Some(server) = with(handle, None, |b| b.server()) else {
+        return std::ptr::null_mut();
+    };
+    match server.companion(&ItemId(id), &name) {
+        Ok(Some(bytes)) => env
+            .byte_array_from_slice(&bytes)
+            .map_or(std::ptr::null_mut(), JByteArray::into_raw),
+        Ok(None) => std::ptr::null_mut(),
+        Err(e) => {
+            eprintln!("underscore: {name} from the server: {e}");
+            std::ptr::null_mut()
+        }
+    }
+}
+
+/// Take `data`, a transcript made elsewhere, as the transcript of the book
+/// named `key`, kept under `dir`. Null on success, otherwise why not.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_io_github_ronin11_underscore_Engine_nativeTranscribeImport(
+    mut env: JNIEnv,
+    _this: JObject,
+    _handle: jlong,
+    dir: JString,
+    key: JString,
+    data: JByteArray,
+) -> jstring {
+    let (Some(dir), Some(key)) = (string(&mut env, &dir), string(&mut env, &key)) else {
+        return jstr(&env, "folder and key are needed");
+    };
+    let Ok(bytes) = env.convert_byte_array(&data) else {
+        return jstr(&env, "could not read the transcript");
+    };
+    match crate::transcript::import(&PathBuf::from(dir), &key, &bytes) {
+        Ok(_) => std::ptr::null_mut(),
+        Err(e) => jstr(&env, &e),
+    }
 }
 
 /// Stop transcribing. What is done stays.

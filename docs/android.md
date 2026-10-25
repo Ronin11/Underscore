@@ -127,6 +127,30 @@ decoder is opened and moved to the listener's place outside the bridge
 lock, so the first wait never holds up the screen. A plain `http://` address works; the manifest
 allows cleartext for exactly this reason.
 
+## Maps and transcripts beside the book
+
+A server book's folder can hold two more files, and the app looks for
+both each time it opens the book:
+
+- `underscore.toml`, the book's music map. It loads in place of a
+  different map loaded for that book, unless the same map is already
+  loaded. It needs a music server or folder to play from, as any map does.
+- `underscore.transcript.json`, a finished transcript in the desktop
+  transcriber's format: `{"chapters": [{"segments": [{"start", "end",
+  "text"}]}]}`, times in seconds from the start of the book. It becomes
+  the book's transcript, marked whole, so the phone never transcribes that
+  book, and the player shows its captions even with phone transcription
+  off.
+
+Audiobookshelf lists every file beside a book, and
+`GET /api/items/{id}/file/{ino}` reads one with plain access to the book.
+It has no way to add a file to a book's folder, so these are put there
+from a computer with the library mounted, and the app only reads them.
+After adding them, scan the library in Audiobookshelf: its folder watcher
+does not always see new files, especially on a network mount, and until
+a scan the book does not list them. The bug report's "beside the book on
+the server" line says what the app found.
+
 ## Coming back
 
 The app remembers the last book, where the listener was in it, and the

@@ -115,6 +115,10 @@ class Engine(sampleRate: Int, val channels: Int) : AutoCloseable {
     /** JSON: phase, leadMs, speed, current line, nearby lines. */
     val transcribeStatus: String get() = nativeTranscribeStatus(h())
     fun transcribeStop() = nativeTranscribeStop(h())
+    /** The file [name] beside server book [id], or null. Network I/O: not on the main thread. */
+    fun serverCompanion(id: String, name: String): ByteArray? = nativeServerCompanion(h(), id, name)
+    /** Take [data] as book [key]'s transcript under [dir]. Null, or why not. */
+    fun transcribeImport(dir: String, key: String, data: ByteArray): String? = nativeTranscribeImport(h(), dir, key, data)
 
     /**
      * The music server (Navidrome or any Subsonic-compatible one). All of
@@ -198,6 +202,8 @@ class Engine(sampleRate: Int, val channels: Int) : AutoCloseable {
     private external fun nativeTranscribeStatus(handle: Long): String
     private external fun nativeTranscribeStop(handle: Long)
     private external fun nativeServerSync(handle: Long): Boolean
+    private external fun nativeServerCompanion(handle: Long, id: String, name: String): ByteArray?
+    private external fun nativeTranscribeImport(handle: Long, dir: String, key: String, data: ByteArray): String?
     private external fun nativeRender(handle: Long, out: FloatArray, nowMs: Long): Int
 
     companion object {

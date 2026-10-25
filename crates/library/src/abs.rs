@@ -67,6 +67,10 @@ pub struct OpenIdStart {
     cookie: String,
 }
 
+/// The largest file [`Audiobookshelf::companion`] reads. A transcript of a
+/// long book is a few megabytes.
+pub const COMPANION_LIMIT: u64 = 64 << 20;
+
 /// One Audiobookshelf server, signed in.
 pub struct Audiobookshelf {
     name: String,
@@ -527,6 +531,42 @@ impl Audiobookshelf {
         started.map(Opened::Streaming).map_err(Error::Io)
     }
 
+    /// The file called `name` in the book's folder on the server, such as
+    /// its music map, or `None` when there is no such file. Audiobookshelf
+    /// lists every file beside a book, so maps and transcripts kept there
+    /// travel with it. Reading one needs access to the book, not download
+    /// rights. At most [`COMPANION_LIMIT`] bytes.
+    ///
+    /// # Errors
+    /// The server could not be reached, or refused.
+    pub fn companion(&self, id: &ItemId, name: &str) -> Result<Option<Vec<u8>>, Error> {
+        let mut resp = self.get(&format!("/api/items/{id}"))?;
+        if resp.status().as_u16() == 404 {
+            return Err(Error::NotFound(id.clone()));
+        }
+        let li: LibraryItem = read_json(&mut resp, "GET /api/items/{id}")?;
+        let Some(file) = li
+            .library_files
+            .iter()
+            .find(|f| f.metadata.filename == name)
+        else {
+            return Ok(None);
+        };
+        let mut resp = self.get(&format!("/api/items/{id}/file/{}", file.ino))?;
+        let status = resp.status().as_u16();
+        if !(200..300).contains(&status) {
+            return Err(Error::Backend(format!(
+                "Audiobookshelf GET {name}: HTTP {status}"
+            )));
+        }
+        resp.body_mut()
+            .with_config()
+            .limit(COMPANION_LIMIT)
+            .read_to_vec()
+            .map(Some)
+            .map_err(|e| Error::Backend(format!("Audiobookshelf GET {name}: {e}")))
+    }
+
     /// The audio files behind a book, in order, learned once and remembered.
     fn audio_files(&self, id: &ItemId) -> Result<Vec<AudioFile>, Error> {
         let known = self
@@ -902,6 +942,17 @@ struct LibraryItem {
     added_at: Option<u64>,
     #[serde(default)]
     is_missing: bool,
+    /// Every file in the book's folder, audio or not.
+    #[serde(default)]
+    library_files: Vec<ServerLibraryFile>,
+}
+
+#[derive(Deserialize, Default)]
+struct ServerLibraryFile {
+    #[serde(default)]
+    ino: String,
+    #[serde(default)]
+    metadata: FileMetadata,
 }
 
 #[derive(Deserialize, Default)]
@@ -971,6 +1022,8 @@ struct ServerAudioFile {
 struct FileMetadata {
     #[serde(default)]
     ext: String,
+    #[serde(default)]
+    filename: String,
 }
 
 #[derive(Deserialize)]
@@ -1144,6 +1197,41 @@ mod tests {
                 "audioFiles": audio
             }
         })
+    }
+
+    #[test]
+    fn reads_a_file_beside_the_book() {
+        let (base, _) = serve(|r| match r.path.as_str() {
+            "/api/items/b1" => json(
+                200,
+                serde_json::json!({
+                    "id": "b1",
+                    "libraryFiles": [
+                        { "ino": "7", "metadata": { "filename": "book.m4b", "ext": ".m4b" } },
+                        { "ino": "9", "metadata": { "filename": "underscore.toml", "ext": ".toml" } }
+                    ]
+                }),
+            ),
+            "/api/items/b1/file/9" => (200, "text/plain", b"[map]".to_vec()),
+            _ => json(404, serde_json::json!({})),
+        });
+        let abs = Audiobookshelf::with_credentials(
+            "abs",
+            &base,
+            Credentials {
+                access: "t".into(),
+                refresh: None,
+            },
+        );
+        let id = ItemId("b1".into());
+        assert_eq!(
+            abs.companion(&id, "underscore.toml").unwrap(),
+            Some(b"[map]".to_vec())
+        );
+        assert_eq!(
+            abs.companion(&id, "underscore.transcript.json").unwrap(),
+            None
+        );
     }
 
     /// The whole happy path against a fake server: sign in, list, open a

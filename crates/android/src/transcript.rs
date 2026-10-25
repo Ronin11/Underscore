@@ -465,6 +465,58 @@ pub fn store_path(dir: &Path, key: &str) -> PathBuf {
     dir.join("transcripts").join(format!("{h:016x}.jsonl"))
 }
 
+/// How far an imported transcript says it covers: past the end of any book,
+/// so the worker finds nothing left to do and never loads a model.
+const WHOLE_BOOK: Duration = Duration::from_hours(10_000);
+
+/// Take a finished transcript made elsewhere as the book's transcript,
+/// replacing what was there: every segment, and the whole book covered.
+/// `json` is the desktop transcriber's format, `{"chapters": [{"segments":
+/// [{"start", "end", "text"}]}]}` with times in seconds from the start of
+/// the book, or the same segments at the top level. Returns how many
+/// segments it took.
+///
+/// # Errors
+/// The JSON is not a transcript, or the file could not be written.
+pub fn import(dir: &Path, key: &str, json: &[u8]) -> Result<usize, String> {
+    let v: serde_json::Value =
+        serde_json::from_slice(json).map_err(|e| format!("not a transcript: {e}"))?;
+    let lists: Vec<&serde_json::Value> = match v.get("chapters").and_then(|c| c.as_array()) {
+        Some(chapters) => chapters.iter().filter_map(|c| c.get("segments")).collect(),
+        None => v.get("segments").into_iter().collect(),
+    };
+    let secs = |g: &serde_json::Value, k: &str| {
+        g.get(k)
+            .and_then(serde_json::Value::as_f64)
+            .filter(|t| t.is_finite() && *t >= 0.0)
+            .map(Duration::from_secs_f64)
+    };
+    let mut segments: Vec<Segment> = lists
+        .iter()
+        .filter_map(|l| l.as_array())
+        .flatten()
+        .filter_map(|g| {
+            let text = g.get("text")?.as_str()?.trim();
+            let (start, end) = (secs(g, "start")?, secs(g, "end")?);
+            (!text.is_empty()).then(|| Segment {
+                start,
+                end,
+                text: text.to_string(),
+            })
+        })
+        .collect();
+    if segments.is_empty() {
+        return Err("the transcript has no segments".into());
+    }
+    segments.sort_by_key(|g| g.start);
+    let path = store_path(dir, key);
+    let part = path.with_extension("part");
+    let _ = fs::remove_file(&part);
+    append(&part, &segments, Duration::ZERO, WHOLE_BOOK);
+    fs::rename(&part, &path).map_err(|e| format!("could not keep the transcript: {e}"))?;
+    Ok(segments.len())
+}
+
 /// Read a transcript file back: its segments, sorted, and what it covers.
 #[must_use]
 pub fn load(path: &Path) -> (Vec<Segment>, Covered) {
@@ -585,6 +637,26 @@ mod tests {
         assert_eq!(texts, ["hello", "there again", "later"]);
         assert_eq!(covered.0, vec![(s(0), s(9)), (s(120), s(125))]);
         assert_eq!(store_path(&dir, "abs:li1"), path);
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn an_imported_transcript_covers_the_whole_book() {
+        let dir = std::env::temp_dir().join(format!("underscore-im-{}", std::process::id()));
+        let json = br#"{"model": "distil-large-v3", "chapters": [
+            {"index": 0, "start": 0.0, "segments": [{"start": 0.14, "end": 1.58, "text": " This is Audible."}]},
+            {"index": 1, "start": 100.0, "segments": [
+                {"start": 101.5, "end": 104.0, "text": "Chapter one."},
+                {"start": 104.0, "end": 104.5, "text": "  "}
+            ]}
+        ]}"#;
+        assert_eq!(import(&dir, "abs:b1", json), Ok(2));
+        let (segments, covered) = load(&store_path(&dir, "abs:b1"));
+        let texts: Vec<_> = segments.iter().map(|g| g.text.as_str()).collect();
+        assert_eq!(texts, ["This is Audible.", "Chapter one."]);
+        assert_eq!(segments[1].start, Duration::from_millis(101_500));
+        assert_eq!(covered.next_gap(s(50_000)), WHOLE_BOOK);
+        assert!(import(&dir, "abs:b1", b"{}").is_err());
         let _ = fs::remove_dir_all(dir);
     }
 }

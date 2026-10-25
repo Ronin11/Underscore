@@ -614,6 +614,7 @@ class PlaybackService : Service() {
                 // A book whose download was cut short streams again.
                 downloading = engine.serverDownload != null && engine.serverBookFile == null
                 if (!downloading) followWithTranscriber()
+                fetchCompanions(id)
             }
         }
     }
@@ -638,7 +639,56 @@ class PlaybackService : Service() {
 
     /** What the transcriber is doing, or null when it is off. */
     fun transcribeStatus(): org.json.JSONObject? =
-        if (!transcribing) null else runCatching { org.json.JSONObject(engine.transcribeStatus) }.getOrNull()
+        if (!transcribing && !hasServerTranscript) null else runCatching { org.json.JSONObject(engine.transcribeStatus) }.getOrNull()
+
+    /** What the server had beside the open book, for the bug report. */
+    @Volatile private var companions: String? = null
+
+    /** Whether the open book's transcript came from beside it on the server. */
+    private val hasServerTranscript: Boolean get() = last.getBoolean("serverTranscript", false)
+
+    /**
+     * Look beside the server book for a music map and a transcript, and
+     * use what is there. A map from the server replaces a different one
+     * loaded for the book; the transcript becomes the book's transcript,
+     * whole, so the phone never transcribes it and shows its captions.
+     */
+    private fun fetchCompanions(id: String) {
+        val dir = File(filesDir, "whisper").absolutePath
+        Thread({
+            val map = engine.serverCompanion(id, SERVER_MAP)?.toString(Charsets.UTF_8)
+            val transcript = engine.serverCompanion(id, SERVER_TRANSCRIPT)
+            val problem = transcript?.let { engine.transcribeImport(dir, "abs:$id", it) }
+            companions = "map ${map?.let { "${it.length} chars" } ?: "none"}, transcript " +
+                (transcript?.let { "${it.size} bytes, ${problem ?: "taken"}" } ?: "none")
+            android.util.Log.i("underscore", "beside $id on the server: $companions")
+            mainHandler.post {
+                if (last.getString("id", null) != id) return@post
+                if (transcript != null && problem == null) {
+                    last.edit().putBoolean("serverTranscript", true).apply()
+                    followWithTranscriber()
+                } else if (problem != null) {
+                    toast("The server's transcript for this book: $problem")
+                }
+                map?.let { useServerMap(id, it) }
+            }
+        }, "underscore-companions").start()
+    }
+
+    /** Load the server's map for [id], unless the same map is loaded. Waits out a load in progress. */
+    private fun useServerMap(id: String, toml: String) {
+        if (last.getString("id", null) != id) return
+        if (mapLoading) {
+            mainHandler.postDelayed({ useServerMap(id, toml) }, 500)
+            return
+        }
+        if (mapName != null && runCatching { lastMapFile.readText() }.getOrNull() == toml) return
+        // With nowhere to find the music, the map would only fail.
+        if (!engine.hasMusicServer && musicDir == null) return
+        loadMap(toml, "$SERVER_MAP (server)") { problem ->
+            if (problem != null) toast("The server's map for this book: $problem")
+        }
+    }
 
     /**
      * Point the transcriber at the open book. It gets a file of its own to
@@ -647,7 +697,7 @@ class PlaybackService : Service() {
      * a book carries on where it stopped.
      */
     private fun followWithTranscriber() {
-        if (!transcribing || speechName == null) return
+        if ((!transcribing && !hasServerTranscript) || speechName == null) return
         val dir = File(filesDir, "whisper").absolutePath
         val length = engine.durationMs
         engine.transcribePosition(engine.positionMs)
@@ -655,8 +705,11 @@ class PlaybackService : Service() {
             "server" -> {
                 val id = last.getString("id", null) ?: return
                 // A book split across files is not transcribed yet: the
-                // transcriber reads one file.
-                val file = engine.serverBookFile?.takeIf { '\n' !in it } ?: return
+                // transcriber reads one file. With the server's transcript
+                // there is nothing to read, only captions to show, so any
+                // name will do while the book still streams.
+                val file = if (hasServerTranscript) engine.serverBookFile?.lines()?.first() ?: "/dev/null"
+                else engine.serverBookFile?.takeIf { '\n' !in it } ?: return
                 engine.transcribeStart(dir, transcribeModel, "abs:$id", file, -1, length)
             }
             "file" -> {
@@ -832,6 +885,7 @@ class PlaybackService : Service() {
                         followWithTranscriber()
                         nameDownloads(file, book.title)
                     }
+                    fetchCompanions(book.id)
                     publishState()
                 }
                 onDone(problem)
@@ -961,6 +1015,7 @@ class PlaybackService : Service() {
             appendLine("music server: ${musicServerUrl ?: "none"}, signed in ${engine.hasMusicServer}, busy ${musicServerBusy ?: "no"}")
             appendLine("server: ${serverUrl ?: "none"}, signed in ${engine.hasServer}, busy ${serverBusy ?: "no"}")
             appendLine("session: active ${session.isActive}")
+            appendLine("beside the book on the server: ${companions ?: "not asked"}")
             appendLine("sleep: auto ${settings.sleepAuto}, listening ${Sleep.sources.filter { Sleep.listening(settings, it) }.joinToString { it.key }.ifEmpty { "none" }}, last ${lastAsleep ?: "none"}, dozed at $dozedAtMs")
             appendLine("sleep: phone readings:\n${PhoneSleep.readings(this@PlaybackService)}")
             if (state == null) {
@@ -1184,6 +1239,9 @@ class PlaybackService : Service() {
         /** Play this much more, fading at the end, then pause. */
         private const val ASLEEP_WIND_DOWN_MS = 60_000L
         private const val SAVE_EVERY_MS = 15_000L
+        /** Kept beside a book on the server: its music map, and a finished transcript. */
+        const val SERVER_MAP = "underscore.toml"
+        const val SERVER_TRANSCRIPT = "underscore.transcript.json"
         private const val ACTIONS =
             PlaybackStateCompat.ACTION_PLAY or
                 PlaybackStateCompat.ACTION_PAUSE or
