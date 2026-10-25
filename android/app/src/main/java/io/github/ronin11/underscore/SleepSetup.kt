@@ -30,7 +30,8 @@ class SleepSetup(
     private val service: () -> PlaybackService?,
     private val onChange: () -> Unit,
 ) {
-    private val settings = Settings(activity)
+    // Lazy: this is built with the activity, before it has a context.
+    private val settings by lazy { Settings(activity) }
     private val main = Handler(Looper.getMainLooper())
     private var afterPermission: ((Boolean) -> Unit)? = null
     private val askPermission = activity.registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
