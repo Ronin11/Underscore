@@ -91,6 +91,17 @@
             </intent-filter>
         </receiver>
 
+        <!-- The watch app saying the listener fell asleep, or answering the
+             setup screen. Only an app with this id and key can reach it. -->
+        <service
+            android:name=".WatchListener"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.google.android.gms.wearable.MESSAGE_RECEIVED" />
+                <data android:scheme="wear" android:host="*" android:pathPrefix="/underscore" />
+            </intent-filter>
+        </service>
+
         <!-- Hands a saved bug report to whatever app the user shares it with. -->
         <provider
             android:name="androidx.core.content.FileProvider"

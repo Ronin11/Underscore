@@ -194,8 +194,15 @@ tell the moment someone drifts off.
   bug report. Tasker, Home Assistant's companion app, or a smart bed's app
   can send it. It does nothing unless it is set up and checked under Auto.
   Its setup has a button that sends a test from the phone itself.
-- **Watch.** Listed but greyed out: it needs a Wear OS app on the watch,
-  which is not built yet.
+- **Watch.** A Wear OS watch, such as a Pixel Watch, running the small
+  app in `android/wear`. Health Services on the watch reports when the
+  wearer is asleep, from heart rate and movement; the app sends that to
+  the phone over the Wearable Data Layer, which `WatchListener` hears.
+  The Data Layer only connects apps with the same id and signing key, so
+  the watch app shares both with the phone app. Its setup on the phone
+  finds the watch, asks it how it stands (on or off, permission, whether
+  this watch offers the asleep state at all), and shows the watch's test
+  button's report.
 
   ```
   adb shell am broadcast -a io.github.ronin11.underscore.ASLEEP \
@@ -205,6 +212,22 @@ tell the moment someone drifts off.
 A new kind of sensor is a new `SleepSource` added to `Sleep.sources`, with
 its setup steps in `SleepSetup`, or simply another app sending the
 broadcast.
+
+### Installing the watch app
+
+Each release has `underscore-watch-*.apk` beside the phone APK. The watch
+has no browser, so it goes on with adb over Wi-Fi:
+
+1. On the watch: Settings, System, About, tap the build number seven
+   times. Then Settings, Developer options: turn on ADB debugging and
+   Wireless debugging, and tap "Pair new device".
+2. On the computer: `adb pair <ip:port> <code>` with what the watch shows,
+   then `adb connect <ip:port>` with the address on the Wireless debugging
+   screen itself.
+3. `adb -s <ip:port> install -r underscore-watch-N.apk`.
+
+Open "underscore sleep" on the watch, tap Watch for sleep, and allow the
+permission. Then on the phone: Sleep, Auto…, Add…, Watch.
 
 ## Storage
 

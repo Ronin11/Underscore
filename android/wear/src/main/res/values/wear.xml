@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- How the phone app finds this app on a connected watch. -->
+    <string-array name="android_wear_capabilities" translatable="false">
+        <item>underscore_sleep</item>
+    </string-array>
+</resources>

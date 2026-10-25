@@ -56,8 +56,9 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@v4
 
-      - name: Build the APK
+      - name: Build the APKs
         working-directory: android
+        # Both modules: the phone app and the Wear OS sleep app.
         run: ./gradlew --no-daemon assembleRelease
 
       - name: Name the APK
@@ -66,13 +67,18 @@ jobs:
           short=$(git rev-parse --short HEAD)
           name="underscore-${{ github.run_number }}-${short}.apk"
           cp android/app/build/outputs/apk/release/app-release.apk "$name"
+          watch="underscore-watch-${{ github.run_number }}-${short}.apk"
+          cp android/wear/build/outputs/apk/release/wear-release.apk "$watch"
           echo "name=$name" >> "$GITHUB_OUTPUT"
+          echo "watch=$watch" >> "$GITHUB_OUTPUT"
           echo "short=$short" >> "$GITHUB_OUTPUT"
 
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ steps.apk.outputs.name }}
-          path: ${{ steps.apk.outputs.name }}
+          path: |
+            ${{ steps.apk.outputs.name }}
+            ${{ steps.apk.outputs.watch }}
 
       - name: Publish as a pre-release
         if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
@@ -81,7 +87,9 @@ jobs:
           tag_name: apk-${{ github.run_number }}
           name: APK build ${{ github.run_number }}
           prerelease: true
-          files: ${{ steps.apk.outputs.name }}
+          files: |
+            ${{ steps.apk.outputs.name }}
+            ${{ steps.apk.outputs.watch }}
           body: |
             Try-it build of the underscore Android app from `${{ steps.apk.outputs.short }}`.
             arm64 only, signed with a debug key: Android will ask you to allow
@@ -90,3 +98,6 @@ jobs:
             Pick a book or podcast file and a music file from your phone, press Play.
             Speed keeps pitch. The music ducks under speech and holds through pauses.
             The music button fades the background out and resumes it in place.
+
+            `underscore-watch-*.apk` is the Wear OS app that tells the phone when
+            you fall asleep. Install it on the watch with adb; see docs/android.md.

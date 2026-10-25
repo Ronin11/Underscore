@@ -180,13 +180,29 @@ class SleepSetup(
                 )
                 status.text = "Waiting for a test. Have your other app send the broadcast now."
             }
+            WatchSleep -> {
+                fun ask() {
+                    status.text = "Looking for the watch…"
+                    WatchSleep.ping(activity) { watches ->
+                        status.text = if (watches.isEmpty()) {
+                            "No connected watch has the underscore sleep app. Install it on the watch and open it once."
+                        } else {
+                            "Found it on ${watches.joinToString()}. Asked how it stands; tap the watch's test button to try a report."
+                        }
+                    }
+                }
+                actions.addView(button("Ask the watch again") { ask() })
+                ask()
+            }
             else -> status.text = "Waiting to hear from it."
         }
 
         Sleep.testing = { from, line ->
             if (from == source) {
                 hear(line)
-                if (source == OtherAppsSleep) status.text = "It works. Save to use it."
+                if (source == OtherAppsSleep || line.startsWith("Test from") || line.startsWith("Heard from")) {
+                    status.text = "It works. Save to use it."
+                }
             }
         }
         val saved = settings.sleepSetUp(source.key)

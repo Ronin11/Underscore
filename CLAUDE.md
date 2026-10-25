@@ -46,7 +46,11 @@ android/         Gradle project. Engine.kt (JNI wrapper), PlaybackService.kt
                  notice the listener fell asleep), SleepSetup.kt (their
                  setup and test screens). UI built in code, no layout
                  XML; icons are vector drawables under res/drawable.
-.github/         ci.yml (fmt, clippy, test) and android.yml (APK pre-release).
+android/wear/    The Wear OS app: Health Services says the wearer is asleep,
+                 and it tells the phone app over the Wearable Data Layer.
+                 Same application id and signing key as the phone app.
+.github/         ci.yml (fmt, clippy, test) and android.yml (APK pre-release,
+                 phone and watch).
 ```
 
 ## Hard boundaries

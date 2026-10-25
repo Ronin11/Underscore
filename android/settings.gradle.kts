@@ -14,3 +14,5 @@ dependencyResolutionManagement {
 }
 rootProject.name = "underscore"
 include(":app")
+// The Wear OS app that tells the phone when the listener falls asleep.
+include(":wear")

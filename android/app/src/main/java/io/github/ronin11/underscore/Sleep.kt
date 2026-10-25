@@ -208,17 +208,72 @@ object OtherAppsSleep : SleepSource {
     override fun stop(context: Context) {}
 }
 
-/** A Pixel Watch or other Wear OS watch. Needs a watch app that is not built yet. */
+/**
+ * A Wear OS watch such as a Pixel Watch, through the watch app in
+ * `android/wear`. The watch's own sleep detection decides; the app sends
+ * the phone a message, which [WatchListener] hears. Nothing to start here.
+ */
 object WatchSleep : SleepSource {
     override val key = "watch"
     override val title = "Watch"
-    override val summary = "A Wear OS watch such as a Pixel Watch. Needs a watch app, not built yet."
-    override val howItWorks = summary
-    override val available = false
+    override val summary = "A Wear OS watch such as a Pixel Watch, with the underscore sleep app on it."
+    override val howItWorks =
+        "The watch notices you fell asleep from your heart rate and movement, and its " +
+            "underscore sleep app tells this phone. Install that app on the watch, open it, and tap " +
+            "Watch for sleep. Then test it from here or with the watch's test button."
 
-    override fun start(context: Context): String? = "not built yet"
+    /** The capability the watch app declares, to find it among connected watches. */
+    const val CAPABILITY = "underscore_sleep"
+    /** Paths and payloads must match `Watch` in the watch app. */
+    const val PATH_ASLEEP = "/underscore/asleep"
+    const val PATH_PING = "/underscore/ping"
+    const val PATH_STATUS = "/underscore/status"
+
+    override fun start(context: Context): String? = null
 
     override fun stop(context: Context) {}
+
+    /** Ask each watch with the app how it stands. [done] hears the watch names, or none. */
+    fun ping(context: Context, done: (List<String>) -> Unit) {
+        com.google.android.gms.wearable.Wearable.getCapabilityClient(context)
+            .getCapability(CAPABILITY, com.google.android.gms.wearable.CapabilityClient.FILTER_REACHABLE)
+            .addOnSuccessListener { info ->
+                for (node in info.nodes) {
+                    com.google.android.gms.wearable.Wearable.getMessageClient(context).sendMessage(node.id, PATH_PING, ByteArray(0))
+                }
+                done(info.nodes.map { it.displayName })
+            }
+            .addOnFailureListener { done(emptyList()) }
+    }
+}
+
+/** Messages from the watch app: it fell asleep, or its answer to a ping. */
+class WatchListener : com.google.android.gms.wearable.WearableListenerService() {
+    private val main = android.os.Handler(android.os.Looper.getMainLooper())
+
+    override fun onMessageReceived(event: com.google.android.gms.wearable.MessageEvent) {
+        val text = String(event.data)
+        when (event.path) {
+            WatchSleep.PATH_STATUS -> main.post { Sleep.testing?.invoke(WatchSleep, text) }
+            WatchSleep.PATH_ASLEEP -> {
+                val fields = text.lines().mapNotNull { line ->
+                    line.split('=', limit = 2).takeIf { it.size == 2 }?.let { it[0] to it[1] }
+                }.toMap()
+                val since = fields["since"]?.toLongOrNull()?.takeIf { it > 0 }
+                val from = fields["source"] ?: "the watch"
+                val test = fields["test"] == "1"
+                main.post {
+                    val listener = Sleep.testing
+                    if (listener != null) {
+                        val at = since?.let { ", asleep since " + java.text.DateFormat.getTimeInstance().format(java.util.Date(it)) } ?: ""
+                        listener(WatchSleep, (if (test) "Test from " else "Heard from ") + from + at)
+                    } else if (!test && Sleep.listening(Settings(this), WatchSleep)) {
+                        Sleep.report(this, since, from)
+                    }
+                }
+            }
+        }
+    }
 }
 
 /** Where both the sleep API's readings and other apps' broadcasts arrive. */

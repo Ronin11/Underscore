@@ -79,4 +79,6 @@ dependencies {
     implementation("androidx.media:media:1.7.0")
     // Google's sleep API, for the phone's own guess that the listener fell asleep.
     implementation("com.google.android.gms:play-services-location:21.3.0")
+    // Messages from the watch app in ../wear, which says when the listener fell asleep.
+    implementation("com.google.android.gms:play-services-wearable:19.0.0")
 }
