@@ -606,7 +606,10 @@ class PlaybackService : Service() {
             if (ok && !bookChosen) {
                 speechName = name
                 bookFromServer = true
-                showServerDetails(id, last.getString("author", null), last.getString("series", null), last.getString("cover", null))
+                // Books opened before covers were saved have none; the server's address finds it.
+                val cover = last.getString("cover", null)
+                    ?: serverUrl?.trimEnd('/')?.let { "$it/api/items/$id/cover?width=480" }
+                showServerDetails(id, last.getString("author", null), last.getString("series", null), cover)
                 publishState()
                 // A book whose download was cut short streams again.
                 downloading = engine.serverDownload != null && engine.serverBookFile == null
@@ -777,12 +780,30 @@ class PlaybackService : Service() {
                         )
                     }
                     serverBookList = books
+                    mainHandler.post { fillOpenBookDetails(books) }
                 }
             } catch (e: Exception) {
                 problem = "unreadable answer from the server: $e"
             }
             mainHandler.post { if (problem == null) onDone(books, null) else onDone(null, problem) }
         }, "underscore-server").start()
+    }
+
+    /**
+     * The open server book's author, series and cover, from a fresh book
+     * list, when they were not saved with it.
+     */
+    private fun fillOpenBookDetails(books: List<ServerBook>) {
+        val id = last.getString("id", null) ?: return
+        if (last.getString("kind", null) != "server" || last.contains("author")) return
+        val book = books.firstOrNull { it.id == id } ?: return
+        last.edit()
+            .putString("author", book.author.ifEmpty { null })
+            .putString("series", book.series.ifEmpty { null })
+            .putString("cover", book.coverUrl)
+            .apply()
+        showServerDetails(book.id, book.author.ifEmpty { null }, book.series.ifEmpty { null }, book.coverUrl)
+        publishState()
     }
 
     /** Download a server book into the cache and load it. [onDone] gets null or a reason. */
