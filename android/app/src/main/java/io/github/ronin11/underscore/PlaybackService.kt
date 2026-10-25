@@ -117,6 +117,9 @@ class PlaybackService : Service() {
     val coverCache: File get() = File(cacheDir, "covers")
     /** The listener picked a book since this start, so the last one stays closed. */
     @Volatile private var bookChosen = false
+    /** The open server book is still downloading; finish up when it is whole. */
+    private var downloading = false
+    private var downloadFailed = false
     private var lastSaveMs = 0L
 
     /**
@@ -195,6 +198,7 @@ class PlaybackService : Service() {
             if (engine.isPlaying && now() - lastSyncMs > SYNC_EVERY_MS) syncServer()
             if (engine.isPlaying && now() - lastSaveMs > SAVE_EVERY_MS) savePosition()
             if (transcribing) engine.transcribePosition(engine.positionMs)
+            if (downloading) checkDownload()
             mainHandler.postDelayed(this, 1000)
         }
     }
@@ -532,9 +536,9 @@ class PlaybackService : Service() {
                 "file" -> last.getString("uri", null)?.let { uri ->
                     mainHandler.post {
                         if (!bookChosen && openSpeech(Uri.parse(uri), name)) {
-                        if (at > 0) seekMs(at)
-                        followWithTranscriber()
-                    }
+                            if (at > 0) seekMs(at)
+                            followWithTranscriber()
+                        }
                     }
                 }
             }
@@ -560,7 +564,9 @@ class PlaybackService : Service() {
                 speechName = name
                 bookFromServer = true
                 publishState()
-                followWithTranscriber()
+                // A book whose download was cut short streams again.
+                downloading = engine.serverDownload != null && engine.serverBookFile == null
+                if (!downloading) followWithTranscriber()
             }
         }
     }
@@ -694,7 +700,7 @@ class PlaybackService : Service() {
     /** Download a server book into the cache and load it. [onDone] gets null or a reason. */
     fun openServerBook(book: ServerBook, onDone: (String?) -> Unit) {
         bookChosen = true
-        serverBusy = "Downloading ${book.title}…"
+        serverBusy = "Opening ${book.title}…"
         Thread({
             val problem = engine.serverOpen(book.id, libraryCache.absolutePath)
             val file = if (problem == null) engine.serverBookFile else null
@@ -707,13 +713,45 @@ class PlaybackService : Service() {
                         putString("kind", "server").putString("id", book.id)
                             .putString("file", file).putString("name", book.title)
                     }
-                    followWithTranscriber()
-                    file?.let { downloadNames.edit().putString(File(it).name, book.title).apply() }
+                    downloadFailed = false
+                    downloading = file == null
+                    if (file != null) {
+                        followWithTranscriber()
+                        downloadNames.edit().putString(File(file).name, book.title).apply()
+                    }
                     publishState()
                 }
                 onDone(problem)
             }
         }, "underscore-server").start()
+    }
+
+    /**
+     * How the open book's download is going, for the player's app bar:
+     * "Downloading 34%", or null when nothing is downloading.
+     */
+    fun downloadLine(): String? {
+        if (!downloading) return null
+        val d = engine.serverDownload ?: return null
+        if (d.startsWith("error")) return "Download stopped"
+        val (got, total) = d.split(' ').map { it.toLongOrNull() ?: 0L }.let { it[0] to it.getOrElse(1) { 0L } }
+        if (total <= 0) return null
+        return "Downloading ${got * 100 / total}%"
+    }
+
+    /** Once the streamed book is whole: note its file and let the transcriber at it. */
+    private fun checkDownload() {
+        val d = engine.serverDownload
+        if (d != null && d.startsWith("error")) {
+            if (!downloadFailed) toast("The download stopped: ${d.removePrefix("error ")}")
+            downloadFailed = true
+            return
+        }
+        val file = engine.serverBookFile ?: return
+        downloading = false
+        last.edit().putString("file", file).apply()
+        speechName?.let { downloadNames.edit().putString(File(file).name, it).apply() }
+        followWithTranscriber()
     }
 
     /** One file in the download cache. [title] is null for map music. */

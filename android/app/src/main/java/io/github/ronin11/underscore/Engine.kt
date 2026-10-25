@@ -92,7 +92,12 @@ class Engine(sampleRate: Int, val channels: Int) : AutoCloseable {
     fun serverOpen(id: String, cacheDir: String): String? = nativeServerOpen(h(), id, cacheDir)
     /** Report the position of the loaded server book. */
     fun serverSync(): Boolean = nativeServerSync(h())
-    /** The cached file behind the loaded server book, or null. */
+    /**
+     * The loaded server book's download: "received total" in bytes,
+     * "error ..." when it stopped, or null when nothing is downloading.
+     */
+    val serverDownload: String? get() = nativeServerDownload(h())
+    /** The cached file behind the loaded server book, or null while it downloads. */
     val serverBookFile: String? get() = nativeServerBookFile(h())
     /** Load a cached server book without asking the server. */
     fun serverReopen(id: String, path: String): Boolean = nativeServerReopen(h(), id, path)
@@ -186,6 +191,7 @@ class Engine(sampleRate: Int, val channels: Int) : AutoCloseable {
     private external fun nativeServerBooks(handle: Long): String
     private external fun nativeServerOpen(handle: Long, id: String, cacheDir: String): String?
     private external fun nativeServerBookFile(handle: Long): String?
+    private external fun nativeServerDownload(handle: Long): String?
     private external fun nativeServerReopen(handle: Long, id: String, path: String): Boolean
     private external fun nativeTranscribeStart(handle: Long, dir: String, model: String, key: String, path: String, fd: Int, lengthMs: Long)
     private external fun nativeTranscribePosition(handle: Long, atMs: Long)

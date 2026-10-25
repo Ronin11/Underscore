@@ -16,7 +16,7 @@
 //! the app opened read-only; the mix leaves through `render` only.
 
 use std::fs::File;
-use std::io::{Seek, SeekFrom};
+use std::io::{Read, Seek, SeekFrom};
 use std::os::fd::FromRawFd;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
@@ -25,8 +25,8 @@ use std::time::Duration;
 use underscore_core::{LayerId, Player, PlayerConfig, RewindPolicy, SleepTimer, Source};
 use underscore_decode::{Chapter, FileSource, MediaSource, probe, probe_path};
 use underscore_library::{
-    Audiobookshelf, Cache, Credentials, ItemId, LocalLibrary, OpenIdStart, Role, Subsonic,
-    SubsonicLogin,
+    Audiobookshelf, Cache, Credentials, Download, ItemId, LocalLibrary, OpenIdStart, Role,
+    StreamReader, Subsonic, SubsonicLogin,
 };
 use underscore_map::Map;
 
@@ -63,6 +63,8 @@ pub struct Bridge {
     book: Option<ItemId>,
     /// Where that book sits in the cache, so the app can find it again.
     book_file: Option<String>,
+    /// That book's download, while it is still coming down.
+    download: Option<Download>,
     /// The music server (Navidrome or any Subsonic-compatible one), once
     /// signed in. Maps play from it instead of a folder when it is set.
     music_server: Option<Arc<Subsonic>>,
@@ -108,6 +110,7 @@ impl Bridge {
             server: None,
             book: None,
             book_file: None,
+            download: None,
             music_server: None,
             openid: None,
         }
@@ -165,6 +168,7 @@ impl Bridge {
         if ok {
             self.book = None;
             self.book_file = None;
+            self.download = None;
             self.set_chapters(chapters);
         }
         ok
@@ -200,8 +204,77 @@ impl Bridge {
             }
             self.book = Some(id);
             self.book_file = Some(path.to_string());
+            self.download = None;
         }
         ok
+    }
+
+    /// Get a downloading server book ready to play: its chapter marks and
+    /// a decoder over the part that is in, moved to `at`. Waits on the
+    /// network for the bytes it needs, so call it outside the lock, then
+    /// hand the result to [`Bridge::load_server_stream`].
+    #[must_use]
+    pub fn prepare_stream(
+        download: &Download,
+        rate: u32,
+        channels: usize,
+        at: Option<Duration>,
+    ) -> Option<(Box<dyn Source>, Vec<Chapter>)> {
+        let path = download.finished();
+        let hint = download.extension();
+        let chapters = download
+            .reader()
+            .ok()
+            .and_then(|r| probe(Box::new(Streamed(r)), hint.as_deref()).ok())
+            .map(|p| p.chapters)
+            .unwrap_or_default();
+        let source = match path {
+            Some(p) => FileSource::open_path(p, rate, channels).ok()?,
+            None => FileSource::open(
+                Box::new(Streamed(download.reader().ok()?)),
+                hint.as_deref(),
+                rate,
+                channels,
+            )
+            .ok()?,
+        };
+        let mut source: Box<dyn Source> = Box::new(source);
+        if let Some(at) = at {
+            source.seek(at);
+        }
+        Some((source, chapters))
+    }
+
+    /// Play a server book that is still downloading, from a source made by
+    /// [`Bridge::prepare_stream`]. The server's chapters stand in when the
+    /// file has none.
+    pub fn load_server_stream(
+        &mut self,
+        source: Box<dyn Source>,
+        file_chapters: Vec<Chapter>,
+        server_chapters: Vec<Chapter>,
+        id: ItemId,
+        download: Download,
+    ) -> bool {
+        if self.player.set_speech_source(source).is_err() {
+            return false;
+        }
+        let chapters = if file_chapters.is_empty() {
+            server_chapters
+        } else {
+            file_chapters
+        };
+        self.set_chapters(chapters);
+        self.book = Some(id);
+        self.book_file = None;
+        self.download = Some(download);
+        true
+    }
+
+    /// The loaded server book's download, while it is coming down.
+    #[must_use]
+    pub fn download(&self) -> Option<Download> {
+        self.download.clone()
     }
 
     /// Sign in to an Audiobookshelf server. Does network I/O: call it off
@@ -278,6 +351,7 @@ impl Bridge {
         if server.is_none() {
             self.book = None;
             self.book_file = None;
+            self.download = None;
         }
         self.server = server;
     }
@@ -296,8 +370,12 @@ impl Bridge {
 
     /// The cached file behind the loaded server book.
     #[must_use]
-    pub fn server_book_file(&self) -> Option<&str> {
-        self.book_file.as_deref()
+    /// Not while it is still downloading: the file is not whole yet.
+    pub fn server_book_file(&self) -> Option<String> {
+        match &self.download {
+            Some(d) => d.finished().and_then(|p| p.to_str().map(ToOwned::to_owned)),
+            None => self.book_file.clone(),
+        }
     }
 
     /// Sign in to a music server. Does network I/O: call it off the audio
@@ -662,6 +740,30 @@ impl Bridge {
     }
 }
 
+/// A downloading file, for the decoder.
+struct Streamed(StreamReader);
+
+impl Read for Streamed {
+    fn read(&mut self, out: &mut [u8]) -> std::io::Result<usize> {
+        self.0.read(out)
+    }
+}
+
+impl Seek for Streamed {
+    fn seek(&mut self, to: SeekFrom) -> std::io::Result<u64> {
+        self.0.seek(to)
+    }
+}
+
+impl MediaSource for Streamed {
+    fn is_seekable(&self) -> bool {
+        true
+    }
+    fn byte_len(&self) -> Option<u64> {
+        Some(self.0.len())
+    }
+}
+
 /// Map an Android MIME type to a file-extension hint for the prober.
 #[must_use]
 pub fn hint_for_mime(mime: &str) -> Option<&'static str> {
@@ -738,7 +840,7 @@ mod tests {
         let mut b = Bridge::new(48_000, 2);
         assert!(b.load_server_book(&fixture(), ItemId("li1".into()), Vec::new()));
         assert_eq!(b.server_book(), Some(ItemId("li1".into())));
-        assert_eq!(b.server_book_file(), Some(fixture().as_str()));
+        assert_eq!(b.server_book_file(), Some(fixture()));
         let fd = std::os::fd::IntoRawFd::into_raw_fd(File::open(fixture()).unwrap());
         assert!(b.load_speech_fd(fd, Some("m4b")));
         assert_eq!(b.server_book(), None);

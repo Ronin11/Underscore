@@ -128,7 +128,7 @@ class MainActivity : ServiceActivity() {
         val playing = e.isPlaying
         val loaded = s.speechName != null
 
-        bar.subtitle = s.serverBusy ?: if (s.mapLoading) "Loading the map, scanning the music folder…" else null
+        bar.subtitle = s.serverBusy ?: if (s.mapLoading) "Loading the map, scanning the music folder…" else s.downloadLine()
 
         titleView.text = s.speechName ?: "No book open"
         sourceView.text = when {

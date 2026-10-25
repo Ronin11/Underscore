@@ -24,7 +24,7 @@ use jni::objects::{JFloatArray, JObject, JString};
 use jni::sys::{JNI_FALSE, JNI_TRUE, jboolean, jfloat, jint, jlong, jstring};
 
 use underscore_decode::Chapter;
-use underscore_library::{Cache, Credentials, ItemId, Library, SubsonicLogin};
+use underscore_library::{Cache, Credentials, ItemId, Library, Opened, SubsonicLogin};
 
 use crate::{Bridge, hint_for_mime};
 
@@ -839,12 +839,9 @@ pub extern "system" fn Java_io_github_ronin11_underscore_Engine_nativeServerOpen
         Ok(i) => i,
         Err(e) => return jstr(&env, &e.to_string()),
     };
-    let path = match server.fetch(&id, &cache) {
-        Ok(p) => p,
+    let opened = match server.open_streaming(&id, &cache) {
+        Ok(o) => o,
         Err(e) => return jstr(&env, &e.to_string()),
-    };
-    let Some(path) = path.to_str().map(ToOwned::to_owned) else {
-        return jstr(&env, "cached file has a path that is not text");
     };
     let chapters: Vec<Chapter> = item
         .chapters
@@ -857,13 +854,43 @@ pub extern "system" fn Java_io_github_ronin11_underscore_Engine_nativeServerOpen
     // Where the listener was, by the server's account. Not worth failing
     // the load over.
     let resume = server.progress(&id).ok().flatten();
-    let loaded = with(handle, false, |b| {
-        let ok = b.load_server_book(&path, id, chapters);
-        if ok && let Some(at) = resume {
-            b.seek(at);
+    let loaded = match opened {
+        Opened::Cached(path) => {
+            let Some(path) = path.to_str().map(ToOwned::to_owned) else {
+                return jstr(&env, "cached file has a path that is not text");
+            };
+            with(handle, false, |b| {
+                let ok = b.load_server_book(&path, id, chapters);
+                if ok && let Some(at) = resume {
+                    b.seek(at);
+                }
+                ok
+            })
         }
-        ok
-    });
+        Opened::Streaming(download) => {
+            // Opening the decoder and moving to the listener's place wait on
+            // the network, so they happen here, outside the lock. By the time
+            // the source is handed over, the bytes around `resume` are in.
+            let (rate, channels) = with(handle, (0, 0), |b| (b.sample_rate(), b.channels()));
+            let Some((source, file_chapters)) =
+                Bridge::prepare_stream(&download, rate, channels, resume)
+            else {
+                return jstr(
+                    &env,
+                    &download
+                        .error()
+                        .unwrap_or_else(|| format!("could not decode {}", item.title)),
+                );
+            };
+            with(handle, false, |b| {
+                let ok = b.load_server_stream(source, file_chapters, chapters, id, download);
+                if ok && let Some(at) = resume {
+                    b.seek(at);
+                }
+                ok
+            })
+        }
+    };
     if loaded {
         std::ptr::null_mut()
     } else {
@@ -878,10 +905,26 @@ pub extern "system" fn Java_io_github_ronin11_underscore_Engine_nativeServerBook
     _this: JObject,
     handle: jlong,
 ) -> jstring {
-    match with(handle, None, |b| {
-        b.server_book_file().map(ToOwned::to_owned)
-    }) {
+    match with(handle, None, |b| b.server_book_file()) {
         Some(path) => jstr(&env, &path),
+        None => std::ptr::null_mut(),
+    }
+}
+
+/// How the loaded server book's download is going: "received total" in
+/// bytes, or null when nothing is downloading. The two match once it is
+/// done; [`nativeServerBookFile`] then has the file.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_io_github_ronin11_underscore_Engine_nativeServerDownload(
+    env: JNIEnv,
+    _this: JObject,
+    handle: jlong,
+) -> jstring {
+    match with(handle, None, |b| b.download()) {
+        Some(d) => match d.error() {
+            Some(e) => jstr(&env, &format!("error {e}")),
+            None => jstr(&env, &format!("{} {}", d.received(), d.len())),
+        },
         None => std::ptr::null_mut(),
     }
 }

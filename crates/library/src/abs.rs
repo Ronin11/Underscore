@@ -24,7 +24,7 @@
 use std::collections::HashMap;
 use std::io;
 use std::path::PathBuf;
-use std::sync::{Mutex, RwLock};
+use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;
 
 use base64::Engine as _;
@@ -33,6 +33,7 @@ use serde::{Deserialize, Serialize};
 use ureq::Agent;
 use ureq::http::Response;
 
+use crate::stream::Download;
 use crate::{Cache, Chapter, Error, Item, ItemId, Library, Query, Role};
 
 /// What to keep to sign in again without a password. The access token
@@ -107,6 +108,15 @@ pub struct ShelfBook {
     pub finished: bool,
     /// When the listener last played it, in milliseconds since 1970.
     pub played_ms: Option<u64>,
+}
+
+/// A book opened for playing: already whole in the cache, or coming down.
+#[derive(Debug)]
+pub enum Opened {
+    /// Every byte is in the cache.
+    Cached(PathBuf),
+    /// Downloading; playable from [`Download::reader`] now.
+    Streaming(Download),
 }
 
 /// What a listing says about a book beyond its [`Item`].
@@ -419,6 +429,113 @@ impl Audiobookshelf {
             .collect())
     }
 
+    /// Open a book to play while it downloads. A book already in the cache
+    /// comes back as its path. Otherwise the download starts, and the
+    /// returned [`Download`] can be read at once; it fetches from wherever
+    /// the reader is, and the file lands in the cache when it is whole.
+    ///
+    /// # Errors
+    /// The server could not be reached, or the book is many files, which
+    /// do not play yet.
+    pub fn open_streaming(self: &Arc<Self>, id: &ItemId, cache: &Cache) -> Result<Opened, Error> {
+        let file = self.audio_file(id)?;
+        if let Some(path) = cache.get(&self.name, id, &file.ext) {
+            return Ok(Opened::Cached(path));
+        }
+        let path = format!("/api/items/{id}/file/{}", file.ino);
+        // The length, from a one-byte range.
+        let resp = self.get_range(&path, Some((0, 0)))?;
+        let status = resp.status().as_u16();
+        let header = |k: &str| {
+            resp.headers()
+                .get(k)
+                .and_then(|v| v.to_str().ok())
+                .map(ToOwned::to_owned)
+        };
+        let len = match status {
+            206 => header("content-range")
+                .and_then(|r| r.rsplit('/').next().and_then(|n| n.trim().parse().ok())),
+            200 => header("content-length").and_then(|n| n.parse().ok()),
+            _ => None,
+        }
+        .ok_or_else(|| Error::Backend(format!("GET {path}: HTTP {status}, no length")))?;
+        drop(resp);
+        let this = Arc::clone(self);
+        let fetch = move |from: u64| -> io::Result<Box<dyn io::Read + Send>> {
+            let resp = this
+                .get_range(&path, Some((from, u64::MAX)))
+                .map_err(io::Error::other)?;
+            match resp.status().as_u16() {
+                206 => {}
+                // A server that ignores ranges sends it all; fine from the start.
+                200 if from == 0 => {}
+                s => {
+                    return Err(io::Error::other(format!(
+                        "GET {path} from {from}: HTTP {s}"
+                    )));
+                }
+            }
+            Ok(Box::new(
+                resp.into_body().into_with_config().limit(u64::MAX).reader(),
+            ))
+        };
+        let target = cache.path_for(&self.name, id, &file.ext);
+        Download::start(target, len, Box::new(fetch))
+            .map(Opened::Streaming)
+            .map_err(Error::Io)
+    }
+
+    /// The one audio file behind a book, learned once and remembered.
+    fn audio_file(&self, id: &ItemId) -> Result<AudioFile, Error> {
+        let known = self
+            .files
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(id)
+            .cloned();
+        if let Some(f) = known {
+            return Ok(f);
+        }
+        let (item, files) = self.expanded(id)?;
+        let n = files.len();
+        let [file] = <[AudioFile; 1]>::try_from(files).map_err(|_| {
+            Error::Unsupported(format!(
+                "\"{}\" is {n} audio files; only single-file books play for now",
+                item.title
+            ))
+        })?;
+        self.files
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(id.clone(), file.clone());
+        Ok(file)
+    }
+
+    /// A GET for bytes `from..=to` of `path`; `u64::MAX` for to the end.
+    fn get_range(
+        &self,
+        path: &str,
+        range: Option<(u64, u64)>,
+    ) -> Result<Response<ureq::Body>, Error> {
+        let range = range.map(|(a, b)| {
+            if b == u64::MAX {
+                format!("bytes={a}-")
+            } else {
+                format!("bytes={a}-{b}")
+            }
+        });
+        self.authed(|token| {
+            let mut req = self
+                .agent
+                .get(self.url(path))
+                .header("Authorization", format!("Bearer {token}"));
+            if let Some(r) = &range {
+                req = req.header("Range", r);
+            }
+            req.call()
+        })
+    }
+
     /// Ask the server for everything about one book, and remember which
     /// file holds its audio.
     fn expanded(&self, id: &ItemId) -> Result<(Item, Vec<AudioFile>), Error> {
@@ -561,29 +678,7 @@ impl Library for Audiobookshelf {
     }
 
     fn fetch(&self, id: &ItemId, cache: &Cache) -> Result<PathBuf, Error> {
-        let known = self
-            .files
-            .read()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .get(id)
-            .cloned();
-        let file = if let Some(f) = known {
-            f
-        } else {
-            let (item, files) = self.expanded(id)?;
-            let n = files.len();
-            let [file] = <[AudioFile; 1]>::try_from(files).map_err(|_| {
-                Error::Unsupported(format!(
-                    "\"{}\" is {n} audio files; only single-file books play for now",
-                    item.title
-                ))
-            })?;
-            self.files
-                .write()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .insert(id.clone(), file.clone());
-            file
-        };
+        let file = self.audio_file(id)?;
         let path = format!("/api/items/{id}/file/{}", file.ino);
         let cached = cache.get_or_fill(&self.name, id, &file.ext, |out| {
             let mut resp = self.get(&path).map_err(io::Error::other)?;
@@ -888,6 +983,7 @@ mod tests {
         method: String,
         path: String,
         auth: Option<String>,
+        range: Option<String>,
         body: String,
     }
 
@@ -915,6 +1011,7 @@ mod tests {
                 let method = parts.next().unwrap_or("").to_string();
                 let path = parts.next().unwrap_or("").to_string();
                 let mut auth = None;
+                let mut range = None;
                 let mut len = 0usize;
                 let mut chunked = false;
                 loop {
@@ -929,6 +1026,7 @@ mod tests {
                         "authorization" => auth = Some(v.trim().to_string()),
                         "x-refresh-token" => auth = Some(format!("refresh {}", v.trim())),
                         "content-length" => len = v.trim().parse().unwrap(),
+                        "range" => range = Some(v.trim().to_string()),
                         "transfer-encoding" => chunked = v.trim() == "chunked",
                         _ => {}
                     }
@@ -954,6 +1052,7 @@ mod tests {
                     method,
                     path,
                     auth,
+                    range,
                     body: String::from_utf8_lossy(&body).into_owned(),
                 };
                 let (status, ctype, out) = handler(&req);
@@ -1153,6 +1252,67 @@ mod tests {
         assert_eq!(untouched.progress, None);
         assert_eq!(untouched.files, Some(4));
         assert!(!untouched.has_cover);
+    }
+
+    /// A book plays while it downloads: the length comes from a one-byte
+    /// range, the bytes from ranged requests, and the whole file lands in
+    /// the cache. Opened again, it comes straight from the cache.
+    #[test]
+    fn streams_a_book_into_the_cache() {
+        let audio: Vec<u8> = (0..300_000u32).map(|i| (i % 253) as u8).collect();
+        let served = audio.clone();
+        let (base, _) = serve(move |r| match (r.method.as_str(), r.path.as_str()) {
+            ("GET", "/api/items/li1?expanded=1") => {
+                json(200, book("li1", "Wizard's First Rule", 1))
+            }
+            ("GET", "/api/items/li1/file/ino0") => {
+                assert_eq!(r.auth.as_deref(), Some("Bearer acc"));
+                let range = r.range.as_deref().unwrap().trim_start_matches("bytes=");
+                let (a, b) = range.split_once('-').unwrap();
+                let a: usize = a.parse().unwrap();
+                let b: usize = b
+                    .parse()
+                    .map_or(served.len() - 1, |b: usize| b.min(served.len() - 1));
+                // The header rides in the content type slot of this fake.
+                let head = Box::leak(
+                    format!("audio/mp4\r\nContent-Range: bytes {a}-{b}/{}", served.len())
+                        .into_boxed_str(),
+                );
+                (206, &*head, served[a..=b].to_vec())
+            }
+            _ => json(404, serde_json::json!({})),
+        });
+        let abs = Arc::new(Audiobookshelf::with_credentials(
+            "abs",
+            &base,
+            Credentials {
+                access: "acc".into(),
+                refresh: None,
+            },
+        ));
+        let dir =
+            std::env::temp_dir().join(format!("underscore-abs-stream-{}", std::process::id()));
+        let cache = Cache::open(&dir).unwrap();
+        let Opened::Streaming(dl) = abs.open_streaming(&"li1".into(), &cache).unwrap() else {
+            panic!("should stream the first time");
+        };
+        assert_eq!(dl.len(), audio.len() as u64);
+        let mut got = Vec::new();
+        dl.reader().unwrap().read_to_end(&mut got).unwrap();
+        assert_eq!(got, audio);
+        for _ in 0..500 {
+            if dl.finished().is_some() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let path = dl.finished().expect("finished");
+        assert_eq!(std::fs::read(&path).unwrap(), audio);
+        let Opened::Cached(again) = abs.open_streaming(&"li1".into(), &cache).unwrap() else {
+            panic!("should come from the cache the second time");
+        };
+        assert_eq!(again, path);
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     /// An expired access token is renewed with the refresh token, once,

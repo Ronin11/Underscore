@@ -21,6 +21,7 @@ pub mod abs;
 pub mod cache;
 pub mod conductor;
 pub mod local;
+pub mod stream;
 pub mod subsonic;
 
 use std::fmt;
@@ -29,10 +30,11 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
-pub use abs::{Audiobookshelf, Credentials, OpenIdStart, ShelfBook};
+pub use abs::{Audiobookshelf, Credentials, OpenIdStart, Opened, ShelfBook};
 pub use cache::Cache;
 pub use conductor::{Conductor, Direction, Resolution};
 pub use local::LocalLibrary;
+pub use stream::{Download, StreamReader};
 pub use subsonic::{Subsonic, SubsonicLogin};
 
 /// What an item is for: the top layer or the bottom one.

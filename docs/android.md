@@ -106,8 +106,16 @@ also installed, Android may ask which app should open the stock address.
 
 Only books that are one audio file play for now; a book split across
 many files is listed, and picking it says so. Podcasts are not listed.
-The whole file comes down before playback starts, which on a home
-network is seconds. A plain `http://` address works; the manifest
+A book plays while it downloads. The file comes down into its cache
+file a range at a time, and the player reads what is in; a seek, or an
+M4B that keeps its index at the end, sends the downloader to that spot
+first, and it fills in the rest after. The player's app bar shows how far
+the download is. The file only takes its place in the cache once every
+byte is in, so the storage screen, coming back, and the transcriber,
+which waits for the whole file, see exactly what a full download leaves.
+A seek far past what is in can pause while that part arrives. The
+decoder is opened and moved to the listener's place outside the bridge
+lock, so the first wait never holds up the screen. A plain `http://` address works; the manifest
 allows cleartext for exactly this reason.
 
 ## Coming back
