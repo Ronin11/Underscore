@@ -98,6 +98,20 @@ class Engine(sampleRate: Int, val channels: Int) : AutoCloseable {
     fun serverReopen(id: String, path: String): Boolean = nativeServerReopen(h(), id, path)
 
     /**
+     * Transcribe the book on the phone, keeping a lead on the listener.
+     * [path] is the book's file, or empty when [fd] is an open descriptor,
+     * which the engine takes over. Returns at once; the work runs on its
+     * own low-priority thread.
+     */
+    fun transcribeStart(dir: String, model: String, key: String, path: String, fd: Int, lengthMs: Long) =
+        nativeTranscribeStart(h(), dir, model, key, path, fd, lengthMs)
+    /** Where the listener is. Cheap. */
+    fun transcribePosition(atMs: Long) = nativeTranscribePosition(h(), atMs)
+    /** JSON: phase, leadMs, speed, current line, nearby lines. */
+    val transcribeStatus: String get() = nativeTranscribeStatus(h())
+    fun transcribeStop() = nativeTranscribeStop(h())
+
+    /**
      * The music server (Navidrome or any Subsonic-compatible one). All of
      * these talk to the server, so call them from a background thread.
      * Errors come back as a message; null is success.
@@ -173,6 +187,10 @@ class Engine(sampleRate: Int, val channels: Int) : AutoCloseable {
     private external fun nativeServerOpen(handle: Long, id: String, cacheDir: String): String?
     private external fun nativeServerBookFile(handle: Long): String?
     private external fun nativeServerReopen(handle: Long, id: String, path: String): Boolean
+    private external fun nativeTranscribeStart(handle: Long, dir: String, model: String, key: String, path: String, fd: Int, lengthMs: Long)
+    private external fun nativeTranscribePosition(handle: Long, atMs: Long)
+    private external fun nativeTranscribeStatus(handle: Long): String
+    private external fun nativeTranscribeStop(handle: Long)
     private external fun nativeServerSync(handle: Long): Boolean
     private external fun nativeRender(handle: Long, out: FloatArray, nowMs: Long): Int
 

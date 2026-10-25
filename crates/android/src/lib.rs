@@ -41,6 +41,7 @@ const CLEAR_FADE: Duration = Duration::from_secs(2);
 
 pub mod follow;
 pub mod jni;
+pub mod transcript;
 
 /// A player wired the way the app needs it.
 pub struct Bridge {

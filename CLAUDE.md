@@ -29,8 +29,12 @@ crates/library   The Library trait (list, search, fetch, progress), LocalLibrary
                  (subsonic.rs), the per-stream Cache, and the Conductor
                  that turns a map plus the book position into player
                  directions.
+crates/transcribe  Speech to text on the device with whisper.cpp (whisper-rs):
+                 model download, 16 kHz mono in, timed segments out.
 crates/android   Bridge (plain Rust over Player), follow.rs (the map worker
-                 thread), and jni.rs (JNI exports).
+                 thread), transcript.rs (the transcriber that keeps a lead
+                 on playback and writes a transcript per book), and jni.rs
+                 (JNI exports).
 crates/cli       `underscore` binary. `scan` and `map check`; no playback yet.
 android/         Gradle project. Engine.kt (JNI wrapper), PlaybackService.kt
                  (foreground service, AudioTrack render thread, media session,

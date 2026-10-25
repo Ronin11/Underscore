@@ -37,6 +37,7 @@ class MainActivity : ServiceActivity() {
     private lateinit var titleView: TextView
     private lateinit var sourceView: TextView
     private lateinit var chapterView: TextView
+    private lateinit var captionView: TextView
     private lateinit var emptyRow: View
     private lateinit var scrub: SeekBar
     private lateinit var elapsed: TextView
@@ -147,6 +148,9 @@ class MainActivity : ServiceActivity() {
             else -> "Chapter ${chapter + 1} of $chapters" + (e.chapterTitle(chapter)?.let { "  ·  $it" } ?: "")
         }
         chapterView.visibility = if (loaded) View.VISIBLE else View.GONE
+        val caption = if (loaded) s.transcribeStatus()?.optString("current")?.takeIf { it.isNotEmpty() && it != "null" } else null
+        captionView.text = caption ?: ""
+        captionView.visibility = if (caption == null) View.GONE else View.VISIBLE
 
         // The scrub bar spans the chapter, as on a CD; the whole book without marks.
         val start = if (inChapter) e.chapterStartMs(chapter) else 0L
@@ -373,9 +377,16 @@ class MainActivity : ServiceActivity() {
             setPadding(0, dp(16), 0, 0)
             setOnClickListener { showChapters() }
         }
+        captionView = label(15f, Gravity.START).apply {
+            setTypeface(typeface, android.graphics.Typeface.ITALIC)
+            alpha = 0.85f
+            maxLines = 4
+            setPadding(0, dp(12), 0, 0)
+        }
         body.addView(titleView)
         body.addView(sourceView)
         body.addView(chapterView)
+        body.addView(captionView)
 
         emptyRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL

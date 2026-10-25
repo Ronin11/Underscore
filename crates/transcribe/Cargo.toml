@@ -1,0 +1,14 @@
+[package]
+name = "underscore-transcribe"
+description = "Speech to text for a book, on the device, with whisper.cpp."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+whisper-rs = "0.16"
+ureq = "3"
+
+[lints]
+workspace = true

@@ -921,3 +921,73 @@ pub extern "system" fn Java_io_github_ronin11_underscore_Engine_nativeServerSync
     };
     jbool(server.report_progress(&book, at).is_ok())
 }
+
+/// Transcribe the book on the phone while it plays. `path` is the book's
+/// file, or empty when `fd` is an open descriptor for it, which this
+/// takes over. `dir` holds the models and the transcripts; `key` names
+/// this book's transcript.
+#[unsafe(no_mangle)]
+#[allow(clippy::too_many_arguments)] // the JNI env, the object and the handle come first
+pub extern "system" fn Java_io_github_ronin11_underscore_Engine_nativeTranscribeStart(
+    mut env: JNIEnv,
+    _this: JObject,
+    _handle: jlong,
+    dir: JString,
+    model: JString,
+    key: JString,
+    path: JString,
+    fd: jint,
+    length_ms: jlong,
+) {
+    let (Some(dir), Some(model), Some(key)) = (
+        string(&mut env, &dir),
+        string(&mut env, &model),
+        string(&mut env, &key),
+    ) else {
+        return;
+    };
+    let path = string(&mut env, &path).unwrap_or_default();
+    let audio = if path.is_empty() {
+        crate::transcript::Audio::Fd(fd)
+    } else {
+        crate::transcript::Audio::Path(PathBuf::from(path))
+    };
+    crate::transcript::start(crate::transcript::Job {
+        key,
+        audio,
+        length: Duration::from_millis(u64::try_from(length_ms).unwrap_or(0)),
+        dir: PathBuf::from(dir),
+        model,
+    });
+}
+
+/// Where the listener is, so the transcriber keeps its lead.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_io_github_ronin11_underscore_Engine_nativeTranscribePosition(
+    _env: JNIEnv,
+    _this: JObject,
+    _handle: jlong,
+    at_ms: jlong,
+) {
+    crate::transcript::set_position(Duration::from_millis(u64::try_from(at_ms).unwrap_or(0)));
+}
+
+/// What the transcriber is doing, as JSON.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_io_github_ronin11_underscore_Engine_nativeTranscribeStatus(
+    env: JNIEnv,
+    _this: JObject,
+    _handle: jlong,
+) -> jstring {
+    jstr(&env, &crate::transcript::status().to_string())
+}
+
+/// Stop transcribing. What is done stays.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_io_github_ronin11_underscore_Engine_nativeTranscribeStop(
+    _env: JNIEnv,
+    _this: JObject,
+    _handle: jlong,
+) {
+    crate::transcript::stop();
+}

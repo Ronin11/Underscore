@@ -122,6 +122,30 @@ at the position this app saved. A book from a file opens again through
 the read grant the picker gave, which the app keeps. The map's text is
 kept in the app's private files. Clearing the map forgets it.
 
+## Transcribing on the phone
+
+Debug, Transcribe on this phone, turns on a transcriber that follows the
+book as it plays. It runs whisper.cpp on the phone with a model picked
+there (`tiny.en`, `base.en` by default, or `small.en`), downloaded once
+from the whisper.cpp project into the app's files. It keeps about a
+quarter hour ahead of the listener, a minute of audio at a time, then
+waits; a seek past what is done starts it from there. It decodes the
+book with a reader of its own at 16 kHz mono, on a thread at background
+priority, so playback never waits on it. What it hears is appended to
+one file per book under `files/whisper/transcripts`, a JSON line per
+segment and per stretch done, and read back when the book opens again,
+so no stretch is done twice. The player shows the line being read; the
+Debug screen shows the lead, the pace against real time, and the lines
+around the listener. The words stay on the phone. They are for placing
+music, like the desktop transcription that maps are made from.
+
+whisper.cpp is C++ and links the NDK's shared C++ runtime, so the APK
+carries `libc++_shared.so`. The APK workflow copies it in with cargo-ndk's
+`--link-libcxx-shared`; a hand build copies it from the NDK's sysroot.
+Note that whisper-rs 0.16's `set_abort_callback_safe` passes whisper.cpp a
+pointer of the wrong type, which reads as "abort" and fails the encoder
+with -6; `crates/transcribe` sets the raw callback instead.
+
 ## Storage
 
 Server books and map music are cached under the app's cache folder,

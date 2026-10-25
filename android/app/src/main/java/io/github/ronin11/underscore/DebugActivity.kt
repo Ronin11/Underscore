@@ -26,6 +26,8 @@ class DebugActivity : ServiceActivity() {
     private lateinit var noiseValue: TextView
     private lateinit var noise: SeekBar
     private lateinit var state: TextView
+    private lateinit var transcribe: Row
+    private lateinit var transcript: TextView
 
     private val pickMusic = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         uri?.let { loadMusic(it) }
@@ -35,6 +37,53 @@ class DebugActivity : ServiceActivity() {
         val s = service ?: return
         music.summary = s.musicName ?: "None. Tap to pick a track to play under the book."
         state.text = s.describe()
+        val t = s.transcribeStatus()
+        transcribe.summary = if (t == null) "Off. Tap to turn on." else transcribeLine(t)
+        transcript.text = t?.optJSONArray("near")?.let { near ->
+            (0 until near.length()).joinToString("\n") { i ->
+                val line = near.getJSONObject(i)
+                "${fmt(line.optLong("startMs"))}  ${line.optString("text")}"
+            }
+        } ?: ""
+        transcript.visibility = if (transcript.text.isEmpty()) View.GONE else View.VISIBLE
+    }
+
+    private fun transcribeLine(t: org.json.JSONObject): String {
+        val model = t.optString("model").ifEmpty { service?.transcribeModel ?: "" }
+        val lead = fmt(t.optLong("leadMs"))
+        val speed = t.optDouble("speed", 0.0)
+        val pace = if (speed > 0) String.format(java.util.Locale.US, "  ·  %.1fx real time", speed) else ""
+        val done = "${fmt(t.optLong("coveredMs"))} of ${fmt(t.optLong("lengthMs"))} done"
+        return when (t.optString("phase")) {
+            "downloading" -> {
+                val got = t.optLong("downloaded") / 1_000_000
+                val total = t.optLong("downloadTotal") / 1_000_000
+                "Downloading the $model model, $got of $total MB"
+            }
+            "loading" -> "Loading the $model model…"
+            "working" -> "Working, $lead ahead$pace  ·  $done  ·  $model"
+            "ahead" -> "Waiting, $lead ahead$pace  ·  $done  ·  $model"
+            "done" -> "The whole book is done  ·  $model"
+            "failed" -> "Stopped: ${t.optString("error")}"
+            else -> "On, waiting for a book  ·  $model"
+        }
+    }
+
+    /** Off, or on with one of the models; bigger is slower and better. */
+    private fun transcribeDialog() {
+        val s = service ?: return
+        val models = listOf("tiny.en" to "75 MB, fastest", "base.en" to "142 MB, the default", "small.en" to "466 MB, best, slowest")
+        val items = arrayOf("Off") + models.map { (name, about) -> "$name  ($about)" }
+        val current = if (!s.transcribing) 0 else 1 + models.indexOfFirst { it.first == s.transcribeModel }.coerceAtLeast(0)
+        AlertDialog.Builder(this)
+            .setTitle("Transcribe on this phone")
+            .setSingleChoiceItems(items, current) { d, which ->
+                if (which == 0) s.setTranscribing(false) else s.setTranscribing(true, models[which - 1].first)
+                d.dismiss()
+                refresh()
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
     }
 
     private fun loadMusic(uri: Uri) {
@@ -124,6 +173,24 @@ class DebugActivity : ServiceActivity() {
                 addView(noiseValue, LinearLayout.LayoutParams(dp(64), ViewGroup.LayoutParams.WRAP_CONTENT))
             },
         )
+
+        list.addView(divider())
+        list.addView(heading("Transcribe on this phone"))
+        transcribe = row("Transcriber", null) { transcribeDialog() }
+        list.addView(transcribe.view)
+        list.addView(
+            row(
+                "Follows the book as it plays, about a quarter hour ahead, at low priority.",
+                "The model downloads once. What it hears is kept per book in the app's files, so it never does a stretch twice.",
+                null,
+            ).view,
+        )
+        transcript = TextView(this).apply {
+            textSize = 13f
+            setPadding(dp(16), dp(4), dp(16), dp(12))
+            setTextIsSelectable(true)
+        }
+        list.addView(transcript)
 
         list.addView(divider())
         list.addView(heading("Report"))

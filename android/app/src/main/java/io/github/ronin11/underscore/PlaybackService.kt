@@ -107,6 +107,10 @@ class PlaybackService : Service() {
     /** Which cached file is which server book, by file name, for the storage screen. */
     private val downloadNames by lazy { getSharedPreferences("downloads", Context.MODE_PRIVATE) }
     private val lastMapFile by lazy { File(filesDir, "last-map.toml") }
+    /** Transcribing on the phone: on or off, and which model. */
+    private val transcribePrefs by lazy { getSharedPreferences("transcribe", Context.MODE_PRIVATE) }
+    val transcribing: Boolean get() = transcribePrefs.getBoolean("on", false)
+    val transcribeModel: String get() = transcribePrefs.getString("model", null) ?: "base.en"
     /** Where server books and map music are cached. */
     val libraryCache: File get() = File(cacheDir, "library")
     /** Where book covers are cached. */
@@ -190,6 +194,7 @@ class PlaybackService : Service() {
             publishStateIfChanged()
             if (engine.isPlaying && now() - lastSyncMs > SYNC_EVERY_MS) syncServer()
             if (engine.isPlaying && now() - lastSaveMs > SAVE_EVERY_MS) savePosition()
+            if (transcribing) engine.transcribePosition(engine.positionMs)
             mainHandler.postDelayed(this, 1000)
         }
     }
@@ -315,10 +320,10 @@ class PlaybackService : Service() {
         runCatching { contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) }
         val ok = openSpeech(uri, name)
         if (ok) {
-            last.edit().clear()
-                .putString("kind", "file").putString("uri", uri.toString()).putString("name", name)
-                .apply()
-            keepMap()
+            rememberBook("file:$uri") {
+                putString("kind", "file").putString("uri", uri.toString()).putString("name", name)
+            }
+            followWithTranscriber()
         }
         return ok
     }
@@ -526,7 +531,10 @@ class PlaybackService : Service() {
                 "server" -> restoreServerBook(last.getString("id", null), last.getString("file", null), name, at)
                 "file" -> last.getString("uri", null)?.let { uri ->
                     mainHandler.post {
-                        if (!bookChosen && openSpeech(Uri.parse(uri), name) && at > 0) seekMs(at)
+                        if (!bookChosen && openSpeech(Uri.parse(uri), name)) {
+                        if (at > 0) seekMs(at)
+                        followWithTranscriber()
+                    }
                     }
                 }
             }
@@ -552,6 +560,7 @@ class PlaybackService : Service() {
                 speechName = name
                 bookFromServer = true
                 publishState()
+                followWithTranscriber()
             }
         }
     }
@@ -565,6 +574,44 @@ class PlaybackService : Service() {
         }
     }
 
+    /**
+     * Turn transcribing on the phone on or off, with [model]. On, it
+     * follows the open book now and every book opened after.
+     */
+    fun setTranscribing(on: Boolean, model: String = transcribeModel) {
+        transcribePrefs.edit().putBoolean("on", on).putString("model", model).apply()
+        if (on) followWithTranscriber() else engine.transcribeStop()
+    }
+
+    /** What the transcriber is doing, or null when it is off. */
+    fun transcribeStatus(): org.json.JSONObject? =
+        if (!transcribing) null else runCatching { org.json.JSONObject(engine.transcribeStatus) }.getOrNull()
+
+    /**
+     * Point the transcriber at the open book. It gets a file of its own to
+     * read: the cached file for a server book, a second descriptor for a
+     * book from a file. Its transcript is kept per book, so coming back to
+     * a book carries on where it stopped.
+     */
+    private fun followWithTranscriber() {
+        if (!transcribing || speechName == null) return
+        val dir = File(filesDir, "whisper").absolutePath
+        val length = engine.durationMs
+        engine.transcribePosition(engine.positionMs)
+        when (last.getString("kind", null)) {
+            "server" -> {
+                val id = last.getString("id", null) ?: return
+                val file = engine.serverBookFile ?: return
+                engine.transcribeStart(dir, transcribeModel, "abs:$id", file, -1, length)
+            }
+            "file" -> {
+                val uri = last.getString("uri", null) ?: return
+                val pfd = runCatching { contentResolver.openFileDescriptor(Uri.parse(uri), "r") }.getOrNull() ?: return
+                engine.transcribeStart(dir, transcribeModel, "file:$uri", "", pfd.detachFd(), length)
+            }
+        }
+    }
+
     /** Remember where the listener is in the current book. */
     private fun savePosition() {
         lastSaveMs = now()
@@ -572,10 +619,20 @@ class PlaybackService : Service() {
         last.edit().putLong("positionMs", engine.positionMs).apply()
     }
 
-    /** A new book keeps the map that was being followed, as the engine does. */
-    private fun keepMap() {
-        val map = mapName ?: return
-        last.edit().putString("map", map).apply()
+    /**
+     * Keep [key]'s book as the one to reopen. A map is written for one
+     * book, so a different book lets the map go; the same book again
+     * keeps it.
+     */
+    private fun rememberBook(key: String, fields: android.content.SharedPreferences.Editor.() -> Unit) {
+        val same = last.getString("key", null) == key
+        val map = last.getString("map", null)
+        last.edit().clear().apply {
+            fields()
+            putString("key", key)
+            if (same && map != null) putString("map", map)
+        }.commit()
+        if (!same && (mapName != null || engine.hasMap)) clearMap()
     }
 
     /** Keep the tokens, which change when the access token is renewed. */
@@ -646,11 +703,11 @@ class PlaybackService : Service() {
                 if (problem == null) {
                     speechName = book.title
                     bookFromServer = true
-                    last.edit().clear()
-                        .putString("kind", "server").putString("id", book.id)
-                        .putString("file", file).putString("name", book.title)
-                        .apply()
-                    keepMap()
+                    rememberBook("abs:${book.id}") {
+                        putString("kind", "server").putString("id", book.id)
+                            .putString("file", file).putString("name", book.title)
+                    }
+                    followWithTranscriber()
                     file?.let { downloadNames.edit().putString(File(it).name, book.title).apply() }
                     publishState()
                 }
