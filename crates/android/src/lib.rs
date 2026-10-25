@@ -60,6 +60,8 @@ pub struct Bridge {
     server: Option<Arc<Audiobookshelf>>,
     /// The server book that is loaded, for progress reports.
     book: Option<ItemId>,
+    /// Where that book sits in the cache, so the app can find it again.
+    book_file: Option<String>,
     /// The music server (Navidrome or any Subsonic-compatible one), once
     /// signed in. Maps play from it instead of a folder when it is set.
     music_server: Option<Arc<Subsonic>>,
@@ -104,6 +106,7 @@ impl Bridge {
             wake: Arc::new(Wake::default()),
             server: None,
             book: None,
+            book_file: None,
             music_server: None,
             openid: None,
         }
@@ -160,6 +163,7 @@ impl Bridge {
             .is_some_and(|src| self.player.set_speech_source(src).is_ok());
         if ok {
             self.book = None;
+            self.book_file = None;
             self.set_chapters(chapters);
         }
         ok
@@ -194,6 +198,7 @@ impl Bridge {
                 self.set_chapters(chapters);
             }
             self.book = Some(id);
+            self.book_file = Some(path.to_string());
         }
         ok
     }
@@ -271,6 +276,7 @@ impl Bridge {
     pub fn set_server(&mut self, server: Option<Arc<Audiobookshelf>>) {
         if server.is_none() {
             self.book = None;
+            self.book_file = None;
         }
         self.server = server;
     }
@@ -285,6 +291,12 @@ impl Bridge {
     #[must_use]
     pub fn server_book(&self) -> Option<ItemId> {
         self.book.clone()
+    }
+
+    /// The cached file behind the loaded server book.
+    #[must_use]
+    pub fn server_book_file(&self) -> Option<&str> {
+        self.book_file.as_deref()
     }
 
     /// Sign in to a music server. Does network I/O: call it off the audio
@@ -717,6 +729,19 @@ mod tests {
         assert!(!b.seek_chapter(3));
         b.seek(Duration::from_secs(4));
         assert_eq!(b.current_chapter(), Some(1));
+    }
+
+    /// A server book remembers its cached file; a local book forgets it.
+    #[test]
+    fn server_book_keeps_its_file() {
+        let mut b = Bridge::new(48_000, 2);
+        assert!(b.load_server_book(&fixture(), ItemId("li1".into()), Vec::new()));
+        assert_eq!(b.server_book(), Some(ItemId("li1".into())));
+        assert_eq!(b.server_book_file(), Some(fixture().as_str()));
+        let fd = std::os::fd::IntoRawFd::into_raw_fd(File::open(fixture()).unwrap());
+        assert!(b.load_speech_fd(fd, Some("m4b")));
+        assert_eq!(b.server_book(), None);
+        assert_eq!(b.server_book_file(), None);
     }
 
     #[test]

@@ -86,12 +86,16 @@ class Engine(sampleRate: Int, val channels: Int) : AutoCloseable {
     fun serverOpenIdStart(url: String): String = nativeServerOpenIdStart(h(), url)
     /** Finish it with the `code` and `state` the browser came back with. */
     fun serverOpenIdFinish(code: String, state: String): String? = nativeServerOpenIdFinish(h(), code, state)
-    /** JSON: `{"books":[{id,title,author,durationMs}]}` or `{"error":...}`. */
+    /** JSON: `{"base":...,"books":[{id,title,author,series,durationMs,progress,...}]}` or `{"error":...}`. */
     fun serverBooks(): String = nativeServerBooks(h())
     /** Download a book into [cacheDir] and load it. Slow. */
     fun serverOpen(id: String, cacheDir: String): String? = nativeServerOpen(h(), id, cacheDir)
     /** Report the position of the loaded server book. */
     fun serverSync(): Boolean = nativeServerSync(h())
+    /** The cached file behind the loaded server book, or null. */
+    val serverBookFile: String? get() = nativeServerBookFile(h())
+    /** Load a cached server book without asking the server. */
+    fun serverReopen(id: String, path: String): Boolean = nativeServerReopen(h(), id, path)
 
     /**
      * The music server (Navidrome or any Subsonic-compatible one). All of
@@ -167,6 +171,8 @@ class Engine(sampleRate: Int, val channels: Int) : AutoCloseable {
     private external fun nativeServerOpenIdFinish(handle: Long, code: String, state: String): String?
     private external fun nativeServerBooks(handle: Long): String
     private external fun nativeServerOpen(handle: Long, id: String, cacheDir: String): String?
+    private external fun nativeServerBookFile(handle: Long): String?
+    private external fun nativeServerReopen(handle: Long, id: String, path: String): Boolean
     private external fun nativeServerSync(handle: Long): Boolean
     private external fun nativeRender(handle: Long, out: FloatArray, nowMs: Long): Int
 

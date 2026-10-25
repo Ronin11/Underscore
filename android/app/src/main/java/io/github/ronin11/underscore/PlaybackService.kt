@@ -102,6 +102,18 @@ class PlaybackService : Service() {
     @Volatile private var syncing = false
     private val prefs by lazy { getSharedPreferences("server", Context.MODE_PRIVATE) }
     private val musicPrefs by lazy { getSharedPreferences("music_server", Context.MODE_PRIVATE) }
+    /** The last book and map, and where the listener was, for the next start. */
+    private val last by lazy { getSharedPreferences("last", Context.MODE_PRIVATE) }
+    /** Which cached file is which server book, by file name, for the storage screen. */
+    private val downloadNames by lazy { getSharedPreferences("downloads", Context.MODE_PRIVATE) }
+    private val lastMapFile by lazy { File(filesDir, "last-map.toml") }
+    /** Where server books and map music are cached. */
+    val libraryCache: File get() = File(cacheDir, "library")
+    /** Where book covers are cached. */
+    val coverCache: File get() = File(cacheDir, "covers")
+    /** The listener picked a book since this start, so the last one stays closed. */
+    @Volatile private var bookChosen = false
+    private var lastSaveMs = 0L
 
     /**
      * One book on the server, as the book list shows it. [progress] runs
@@ -177,6 +189,7 @@ class PlaybackService : Service() {
         override fun run() {
             publishStateIfChanged()
             if (engine.isPlaying && now() - lastSyncMs > SYNC_EVERY_MS) syncServer()
+            if (engine.isPlaying && now() - lastSaveMs > SAVE_EVERY_MS) savePosition()
             mainHandler.postDelayed(this, 1000)
         }
     }
@@ -200,8 +213,7 @@ class PlaybackService : Service() {
         // the system's media controls have something to show from the start.
         publishState()
         mainHandler.post(stateTick)
-        resumeServer()
-        resumeMusicServer()
+        restore()
     }
 
     override fun onBind(intent: Intent?): IBinder = binder
@@ -219,6 +231,7 @@ class PlaybackService : Service() {
     }
 
     override fun onDestroy() {
+        savePosition()
         mainHandler.removeCallbacks(stateTick)
         settingsListener?.let { settings.unlisten(it) }
         unregisterReceiver(noisyReceiver)
@@ -248,6 +261,7 @@ class PlaybackService : Service() {
         resumeOnFocusGain = false
         publishState()
         syncServer()
+        savePosition()
     }
 
     fun toggle() {
@@ -296,7 +310,25 @@ class PlaybackService : Service() {
 
     /** Open [uri] read-only and hand the descriptor to the engine. */
     fun loadSpeech(uri: Uri, name: String?): Boolean {
-        val ok = load(uri) { fd, mime -> engine.loadSpeech(fd, mime) }
+        bookChosen = true
+        // Keep the right to read it after a restart, to open it again then.
+        runCatching { contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) }
+        val ok = openSpeech(uri, name)
+        if (ok) {
+            last.edit().clear()
+                .putString("kind", "file").putString("uri", uri.toString()).putString("name", name)
+                .apply()
+            keepMap()
+        }
+        return ok
+    }
+
+    private fun openSpeech(uri: Uri, name: String?): Boolean {
+        val ok = try {
+            load(uri) { fd, mime -> engine.loadSpeech(fd, mime) }
+        } catch (e: Exception) {
+            false
+        }
         if (ok) {
             speechName = name
             bookFromServer = false
@@ -333,7 +365,11 @@ class PlaybackService : Service() {
                 dir != null -> engine.loadMap(toml, dir.absolutePath, cache.absolutePath)
                 else -> "Set the music folder in Settings first"
             }
-            if (problem == null) mapName = name
+            if (problem == null) {
+                mapName = name
+                runCatching { lastMapFile.writeText(toml) }
+                last.edit().putString("map", name ?: "map").apply()
+            }
             mapLoading = false
             mainHandler.post { onDone(problem) }
         }, "underscore-map-load").start()
@@ -342,6 +378,8 @@ class PlaybackService : Service() {
     fun clearMap() {
         engine.clearMap()
         mapName = null
+        last.edit().remove("map").apply()
+        lastMapFile.delete()
     }
 
     // The music server. Same shape as Audiobookshelf below, but what is
@@ -366,7 +404,7 @@ class PlaybackService : Service() {
         musicPrefs.edit().clear().apply()
     }
 
-    /** Come back to the music server from the last run, if there was one. */
+    /** Come back to the music server from the last run, if there was one. Blocks: network. */
     private fun resumeMusicServer() {
         val base = musicPrefs.getString("url", null) ?: return
         val user = musicPrefs.getString("user", null) ?: return
@@ -374,11 +412,9 @@ class PlaybackService : Service() {
         val token = musicPrefs.getString("token", null) ?: return
         musicServerUrl = base
         musicServerBusy = "Reconnecting to $base…"
-        Thread({
-            val problem = engine.musicResume(base, user, salt, token)
-            musicServerBusy = null
-            if (problem != null) android.util.Log.w("underscore", "music server: $problem")
-        }, "underscore-music-server").start()
+        val problem = engine.musicResume(base, user, salt, token)
+        musicServerBusy = null
+        if (problem != null) android.util.Log.w("underscore", "music server: $problem")
     }
 
     private fun saveMusicServer(base: String) {
@@ -459,19 +495,87 @@ class PlaybackService : Service() {
         prefs.edit().clear().apply()
     }
 
-    /** Come back to the server from the last run, if there was one. */
+    /** Come back to the server from the last run, if there was one. Blocks: network. */
     private fun resumeServer() {
         val base = prefs.getString("url", null) ?: return
         val access = prefs.getString("access", null) ?: return
         val refresh = prefs.getString("refresh", null)
         serverUrl = base
         serverBusy = "Reconnecting to $base…"
+        val problem = engine.serverResume(base, access, refresh)
+        if (problem == null) saveServer(base)
+        serverBusy = null
+        if (problem != null) android.util.Log.w("underscore", "server: $problem")
+    }
+
+    /**
+     * Pick up where the last run left off: sign back in to both servers,
+     * then open the last book at the last position and follow the last
+     * map. A server book comes from the cache, so this needs no download;
+     * without the server it opens the cached file as it is. Runs on its
+     * own thread because all of it can wait on the network.
+     */
+    private fun restore() {
         Thread({
-            val problem = engine.serverResume(base, access, refresh)
-            if (problem == null) saveServer(base)
-            serverBusy = null
-            if (problem != null) android.util.Log.w("underscore", "server: $problem")
-        }, "underscore-server").start()
+            resumeServer()
+            resumeMusicServer()
+            val kind = last.getString("kind", null)
+            val name = last.getString("name", null)
+            val at = last.getLong("positionMs", -1)
+            when (kind) {
+                "server" -> restoreServerBook(last.getString("id", null), last.getString("file", null), name, at)
+                "file" -> last.getString("uri", null)?.let { uri ->
+                    mainHandler.post {
+                        if (!bookChosen && openSpeech(Uri.parse(uri), name) && at > 0) seekMs(at)
+                    }
+                }
+            }
+            mainHandler.post { restoreMap() }
+        }, "underscore-restore").start()
+    }
+
+    /** On the restore thread. */
+    private fun restoreServerBook(id: String?, file: String?, name: String?, at: Long) {
+        if (id == null || bookChosen) return
+        serverBusy = "Reopening ${name ?: "the last book"}…"
+        // The server knows the latest position, from any app; ask it first.
+        var ok = engine.hasServer && engine.serverOpen(id, libraryCache.absolutePath) == null
+        // The server had no position for it: use ours.
+        if (ok && at > 0 && engine.positionMs < 1000) engine.seekMs(at)
+        if (!ok && file != null && File(file).isFile) {
+            ok = engine.serverReopen(id, file)
+            if (ok && at > 0) engine.seekMs(at)
+        }
+        serverBusy = null
+        mainHandler.post {
+            if (ok && !bookChosen) {
+                speechName = name
+                bookFromServer = true
+                publishState()
+            }
+        }
+    }
+
+    private fun restoreMap() {
+        val name = last.getString("map", null) ?: return
+        if (mapName != null || mapLoading) return
+        val text = runCatching { lastMapFile.readText() }.getOrNull() ?: return
+        loadMap(text, name) { problem ->
+            if (problem != null) toast("Could not reload the map $name: $problem")
+        }
+    }
+
+    /** Remember where the listener is in the current book. */
+    private fun savePosition() {
+        lastSaveMs = now()
+        if (speechName == null || last.getString("kind", null) == null) return
+        last.edit().putLong("positionMs", engine.positionMs).apply()
+    }
+
+    /** A new book keeps the map that was being followed, as the engine does. */
+    private fun keepMap() {
+        val map = mapName ?: return
+        last.edit().putString("map", map).apply()
     }
 
     /** Keep the tokens, which change when the access token is renewed. */
@@ -532,20 +636,59 @@ class PlaybackService : Service() {
 
     /** Download a server book into the cache and load it. [onDone] gets null or a reason. */
     fun openServerBook(book: ServerBook, onDone: (String?) -> Unit) {
-        val cache = File(cacheDir, "library")
+        bookChosen = true
         serverBusy = "Downloading ${book.title}…"
         Thread({
-            val problem = engine.serverOpen(book.id, cache.absolutePath)
+            val problem = engine.serverOpen(book.id, libraryCache.absolutePath)
+            val file = if (problem == null) engine.serverBookFile else null
             serverBusy = null
             mainHandler.post {
                 if (problem == null) {
                     speechName = book.title
                     bookFromServer = true
+                    last.edit().clear()
+                        .putString("kind", "server").putString("id", book.id)
+                        .putString("file", file).putString("name", book.title)
+                        .apply()
+                    keepMap()
+                    file?.let { downloadNames.edit().putString(File(it).name, book.title).apply() }
                     publishState()
                 }
                 onDone(problem)
             }
         }, "underscore-server").start()
+    }
+
+    /** One file in the download cache. [title] is null for map music. */
+    data class Download(val file: File, val title: String?, val bytes: Long, val open: Boolean)
+
+    /** What the download cache holds. Reads the folder: call it off the main thread. */
+    fun downloads(): List<Download> {
+        val open = engine.serverBookFile?.let { File(it).name }
+        return (libraryCache.listFiles() ?: emptyArray())
+            .filter { it.isFile && !it.name.endsWith(".part") }
+            .map { Download(it, downloadNames.getString(it.name, null), it.length(), it.name == open) }
+    }
+
+    /** Bytes the cached covers take. Reads the folder: call it off the main thread. */
+    fun coverBytes(): Long = (coverCache.listFiles() ?: emptyArray()).sumOf { it.length() }
+
+    /**
+     * Delete cached files. The open book is kept, since it is playing
+     * from that file. Music the map needs again downloads again.
+     */
+    fun removeDownloads(files: List<File>, covers: Boolean = false): Int {
+        val open = engine.serverBookFile?.let { File(it).name }
+        var n = 0
+        for (f in files) {
+            if (f.name == open) continue
+            if (f.delete()) {
+                n++
+                downloadNames.edit().remove(f.name).apply()
+            }
+        }
+        if (covers) coverCache.listFiles()?.forEach { it.delete() }
+        return n
     }
 
     /** Tell the server where the book is. Cheap when there is no server book. */
@@ -805,6 +948,7 @@ class PlaybackService : Service() {
         private const val ACTION_FORWARD = "io.github.ronin11.underscore.FORWARD"
         /** The browser came back from a single sign-on; the intent's data is the address. */
         const val ACTION_OPENID_RETURN = "io.github.ronin11.underscore.OPENID_RETURN"
+        private const val SAVE_EVERY_MS = 15_000L
         private const val ACTIONS =
             PlaybackStateCompat.ACTION_PLAY or
                 PlaybackStateCompat.ACTION_PAUSE or

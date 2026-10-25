@@ -871,6 +871,41 @@ pub extern "system" fn Java_io_github_ronin11_underscore_Engine_nativeServerOpen
     }
 }
 
+/// The cached file behind the loaded server book, or null.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_io_github_ronin11_underscore_Engine_nativeServerBookFile(
+    env: JNIEnv,
+    _this: JObject,
+    handle: jlong,
+) -> jstring {
+    match with(handle, None, |b| {
+        b.server_book_file().map(ToOwned::to_owned)
+    }) {
+        Some(path) => jstr(&env, &path),
+        None => std::ptr::null_mut(),
+    }
+}
+
+/// Load a server book straight from the cache, without asking the
+/// server: for coming back to the last book when the server is out of
+/// reach. Chapters come from the file only. Progress reports resume once
+/// the server is signed in again.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_io_github_ronin11_underscore_Engine_nativeServerReopen(
+    mut env: JNIEnv,
+    _this: JObject,
+    handle: jlong,
+    id: JString,
+    path: JString,
+) -> jboolean {
+    let (Some(id), Some(path)) = (string(&mut env, &id), string(&mut env, &path)) else {
+        return JNI_FALSE;
+    };
+    jbool(with(handle, false, |b| {
+        b.load_server_book(&path, ItemId(id), Vec::new())
+    }))
+}
+
 /// Tell the server where the listener is in the loaded server book.
 /// Does nothing, and returns false, when the book is not from the server.
 #[unsafe(no_mangle)]

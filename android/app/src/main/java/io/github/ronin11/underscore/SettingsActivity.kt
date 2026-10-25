@@ -35,6 +35,9 @@ class SettingsActivity : ServiceActivity() {
     private lateinit var musicFolder: Row
     private lateinit var server: Row
     private lateinit var musicServer: Row
+    private lateinit var storage: Row
+    /** What the download cache holds, measured off the main thread. */
+    @Volatile private var storageSummary: String? = null
 
     private val pickMusicFolder = registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
         uri?.let { chooseMusicFolder(it) }
@@ -66,6 +69,89 @@ class SettingsActivity : ServiceActivity() {
             s.serverUrl != null -> "${s.serverUrl}, not signed in"
             else -> "Not signed in"
         }
+        storage.summary = storageSummary ?: "Measuring…"
+    }
+
+    override fun onServiceReady() = measure()
+
+    private fun size(bytes: Long): String = android.text.format.Formatter.formatShortFileSize(this, bytes)
+
+    /** Count up the downloads in the background and show the total. */
+    private fun measure() {
+        val s = service ?: return
+        Thread({
+            val files = s.downloads()
+            val books = files.filter { it.title != null }
+            val other = files.filter { it.title == null }
+            val covers = s.coverBytes()
+            val parts = ArrayList<String>()
+            parts.add(if (books.size == 1) "1 book, ${size(books[0].bytes)}" else "${books.size} books, ${size(books.sumOf { it.bytes })}")
+            if (other.isNotEmpty()) parts.add("music and other files ${size(other.sumOf { it.bytes })}")
+            if (covers > 0) parts.add("covers ${size(covers)}")
+            storageSummary = "${parts.joinToString(", ")}. Tap to remove some."
+            ui.post { refresh() }
+        }, "underscore-storage").start()
+    }
+
+    /**
+     * The downloads, biggest first, each removable on its own, and a way
+     * to remove them all. The open book stays: it plays from its file.
+     */
+    private fun storageDialog() {
+        val s = service ?: return
+        Thread({
+            val files = s.downloads()
+            val covers = s.coverBytes()
+            ui.post { showStorage(s, files, covers) }
+        }, "underscore-storage").start()
+    }
+
+    private fun showStorage(s: PlaybackService, files: List<PlaybackService.Download>, covers: Long) {
+        class Entry(val label: String, val files: List<PlaybackService.Download>, val covers: Boolean = false)
+        val entries = ArrayList<Entry>()
+        for (d in files.filter { it.title != null }.sortedByDescending { it.bytes }) {
+            entries.add(Entry("${d.title}\n${size(d.bytes)}" + if (d.open) "  ·  open now" else "", listOf(d)))
+        }
+        val other = files.filter { it.title == null }
+        if (other.isNotEmpty()) {
+            entries.add(
+                Entry(
+                    "Map music and other files\n${other.size} files, ${size(other.sumOf { it.bytes })}. Includes books downloaded before this version.",
+                    other,
+                ),
+            )
+        }
+        if (covers > 0) entries.add(Entry("Book covers\n${size(covers)}", emptyList(), covers = true))
+        if (entries.isEmpty()) {
+            toast("Nothing is downloaded")
+            return
+        }
+        fun remove(what: String, entry: List<PlaybackService.Download>, alsoCovers: Boolean) {
+            AlertDialog.Builder(this)
+                .setTitle("Remove $what?")
+                .setMessage("It downloads again the next time it is needed.")
+                .setPositiveButton("Remove") { _, _ ->
+                    Thread({
+                        s.removeDownloads(entry.map { it.file }, alsoCovers)
+                        ui.post { measure() }
+                    }, "underscore-storage").start()
+                }
+                .setNegativeButton("Cancel", null)
+                .show()
+        }
+        AlertDialog.Builder(this)
+            .setTitle("Downloads")
+            .setItems(entries.map { it.label }.toTypedArray()) { _, which ->
+                val e = entries[which]
+                when {
+                    e.files.singleOrNull()?.open == true -> toast("That book is open. Open another book first.")
+                    e.covers -> remove("the book covers", emptyList(), true)
+                    else -> remove(e.files.singleOrNull()?.title ?: "the map music and other files", e.files, false)
+                }
+            }
+            .setNeutralButton("Remove all") { _, _ -> remove("all downloads except the open book", files, true) }
+            .setNegativeButton("Close", null)
+            .show()
     }
 
     /** A single-choice list of seconds for one of the skip buttons. */
@@ -201,6 +287,11 @@ class SettingsActivity : ServiceActivity() {
         list.addView(heading("Audiobookshelf"))
         server = row("Server", null) { serverDialog() }
         list.addView(server.view)
+
+        list.addView(divider())
+        list.addView(heading("Storage"))
+        storage = row("Downloads", null) { storageDialog() }
+        list.addView(storage.view)
 
         list.addView(divider())
         list.addView(heading("About"))

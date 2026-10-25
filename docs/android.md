@@ -110,6 +110,29 @@ The whole file comes down before playback starts, which on a home
 network is seconds. A plain `http://` address works; the manifest
 allows cleartext for exactly this reason.
 
+## Coming back
+
+The app remembers the last book, where the listener was in it, and the
+last map. When it starts again, after the system closed it or the phone
+restarted, it signs back in to both servers, opens that book at that
+place, and follows that map again. A server book opens from the cache,
+at the position the server has, which may be newer if another app
+played it since. Without the server it opens the cached file as it is,
+at the position this app saved. A book from a file opens again through
+the read grant the picker gave, which the app keeps. The map's text is
+kept in the app's private files. Clearing the map forgets it.
+
+## Storage
+
+Server books and map music are cached under the app's cache folder,
+`cache/library`, one file per item exactly as the server sent it. Covers
+are under `cache/covers`. Nothing removes them on its own, though
+Android may clear the cache folder when the phone runs short of space.
+Settings, Storage, Downloads shows what they take and removes one book,
+the map music, the covers, or all of it. The open book is kept, because
+it is playing from its file. Anything removed downloads again when it is
+next needed.
+
 ## Lock screen, headset, and other apps
 
 The service holds a `MediaSessionCompat` and a media-style notification
@@ -184,14 +207,12 @@ or a URI the app has no read grant for.
 
 ## What to add next, in rough order
 
-1. Remember the last book, map, and position across launches, with a
-   persisted URI grant for the map. Settings and the music folder
-   already persist.
-2. Keep the music folder's index between map loads instead of rescanning.
-3. Microphone level for noise compensation (`RECORD_AUDIO`, a short RMS
+1. Keep the music folder's index between map loads instead of rescanning.
+2. Microphone level for noise compensation (`RECORD_AUDIO`, a short RMS
    window on a low-priority thread, `Engine.setNoiseDb`).
-4. A music queue: a folder or playlist, crossfaded track to track.
-5. Cover art, from the server or the file's tags, on the player.
+3. A music queue: a folder or playlist, crossfaded track to track.
+4. Cover art on the player, from the server or the file's tags. The
+   book screen already shows the server's covers.
 
 Chapters are in: the bridge reads M4B chapter marks when a book loads,
 the activity shows the current chapter and lists them in a dialog that
