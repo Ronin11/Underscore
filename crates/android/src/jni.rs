@@ -24,7 +24,7 @@ use jni::objects::{JFloatArray, JObject, JString};
 use jni::sys::{JNI_FALSE, JNI_TRUE, jboolean, jfloat, jint, jlong, jstring};
 
 use underscore_decode::Chapter;
-use underscore_library::{Cache, Credentials, ItemId, Library, Opened, SubsonicLogin};
+use underscore_library::{Cache, Credentials, Download, ItemId, Library, Opened, SubsonicLogin};
 
 use crate::{Bridge, hint_for_mime};
 
@@ -872,9 +872,7 @@ pub extern "system" fn Java_io_github_ronin11_underscore_Engine_nativeServerOpen
             // the network, so they happen here, outside the lock. By the time
             // the source is handed over, the bytes around `resume` are in.
             let (rate, channels) = with(handle, (0, 0), |b| (b.sample_rate(), b.channels()));
-            let Some((source, file_chapters)) =
-                Bridge::prepare_stream(&download, rate, channels, resume)
-            else {
+            let Some(prepared) = Bridge::prepare_stream(&download, rate, channels, resume) else {
                 return jstr(
                     &env,
                     &download
@@ -883,7 +881,25 @@ pub extern "system" fn Java_io_github_ronin11_underscore_Engine_nativeServerOpen
                 );
             };
             with(handle, false, |b| {
-                let ok = b.load_server_stream(source, file_chapters, chapters, id, download);
+                let ok = b.load_server_stream(prepared, chapters, id);
+                if ok && let Some(at) = resume {
+                    b.seek(at);
+                }
+                ok
+            })
+        }
+        Opened::Parts(parts) => {
+            // As above, a part at a time: the first part plays while the
+            // rest queue up behind it.
+            let (rate, channels) = with(handle, (0, 0), |b| (b.sample_rate(), b.channels()));
+            let Some(prepared) = Bridge::prepare_parts(parts, rate, channels, resume) else {
+                return jstr(
+                    &env,
+                    &format!("could not decode the parts of {}", item.title),
+                );
+            };
+            with(handle, false, |b| {
+                let ok = b.load_server_stream(prepared, chapters, id);
                 if ok && let Some(at) = resume {
                     b.seek(at);
                 }
@@ -920,13 +936,16 @@ pub extern "system" fn Java_io_github_ronin11_underscore_Engine_nativeServerDown
     _this: JObject,
     handle: jlong,
 ) -> jstring {
-    match with(handle, None, |b| b.download()) {
-        Some(d) => match d.error() {
-            Some(e) => jstr(&env, &format!("error {e}")),
-            None => jstr(&env, &format!("{} {}", d.received(), d.len())),
-        },
-        None => std::ptr::null_mut(),
+    let downloads = with(handle, Vec::new(), |b| b.downloads());
+    if downloads.is_empty() {
+        return std::ptr::null_mut();
     }
+    if let Some(e) = downloads.iter().find_map(Download::error) {
+        return jstr(&env, &format!("error {e}"));
+    }
+    let got: u64 = downloads.iter().map(Download::received).sum();
+    let total: u64 = downloads.iter().map(Download::len).sum();
+    jstr(&env, &format!("{got} {total}"))
 }
 
 /// Load a server book straight from the cache, without asking the

@@ -72,6 +72,14 @@ class PlaybackService : Service() {
     /** True when the loaded book came from the Audiobookshelf server. */
     var bookFromServer = false
         private set
+    /** The open book's author and series, when known. */
+    var speechAuthor: String? = null
+        private set
+    var speechSeries: String? = null
+        private set
+    /** The open book's cover, once loaded. */
+    var speechCover: android.graphics.Bitmap? = null
+        private set
     var musicName: String? = null
         private set
     var mapName: String? = null
@@ -140,10 +148,7 @@ class PlaybackService : Service() {
         val finished: Boolean,
         val playedMs: Long,
         val open: Boolean,
-    ) {
-        /** Split across files, which does not play yet. */
-        val playable: Boolean get() = files <= 1
-    }
+    )
 
     /** The last book list, so the book screen opens on something. */
     @Volatile var serverBookList: List<ServerBook>? = null
@@ -157,6 +162,7 @@ class PlaybackService : Service() {
     private var shownTitle: String? = null
     private var shownChapter: String? = null
     private var shownDurationMs = -1L
+    private var shownCover: android.graphics.Bitmap? = null
 
     private val noisyReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
@@ -317,6 +323,36 @@ class PlaybackService : Service() {
         publishState()
     }
 
+    /** Author, series and cover for a server book; the cover loads in the background. */
+    private fun showServerDetails(id: String, author: String?, series: String?, coverUrl: String?) {
+        speechAuthor = author
+        speechSeries = series
+        speechCover = Covers.cached(id)
+        coverUrl?.let { url ->
+            Covers.load(this, id, url) { bitmap ->
+                if (last.getString("id", null) == id) {
+                    speechCover = bitmap
+                    publishState()
+                }
+            }
+        }
+    }
+
+    /** The author and art inside a book file, read in the background. */
+    private fun showFileDetails(uri: Uri) {
+        speechAuthor = null
+        speechSeries = null
+        speechCover = null
+        val key = "file:$uri"
+        Covers.loadEmbedded(this, key, uri) { bitmap, author ->
+            if (last.getString("key", null) == key) {
+                speechCover = bitmap
+                speechAuthor = author
+                publishState()
+            }
+        }
+    }
+
     /** Open [uri] read-only and hand the descriptor to the engine. */
     fun loadSpeech(uri: Uri, name: String?): Boolean {
         bookChosen = true
@@ -327,6 +363,7 @@ class PlaybackService : Service() {
             rememberBook("file:$uri") {
                 putString("kind", "file").putString("uri", uri.toString()).putString("name", name)
             }
+            showFileDetails(uri)
             followWithTranscriber()
         }
         return ok
@@ -537,6 +574,7 @@ class PlaybackService : Service() {
                     mainHandler.post {
                         if (!bookChosen && openSpeech(Uri.parse(uri), name)) {
                             if (at > 0) seekMs(at)
+                            showFileDetails(Uri.parse(uri))
                             followWithTranscriber()
                         }
                     }
@@ -554,7 +592,7 @@ class PlaybackService : Service() {
         var ok = engine.hasServer && engine.serverOpen(id, libraryCache.absolutePath) == null
         // The server had no position for it: use ours.
         if (ok && at > 0 && engine.positionMs < 1000) engine.seekMs(at)
-        if (!ok && file != null && File(file).isFile) {
+        if (!ok && file != null && file.lines().all { File(it).isFile }) {
             ok = engine.serverReopen(id, file)
             if (ok && at > 0) engine.seekMs(at)
         }
@@ -563,6 +601,7 @@ class PlaybackService : Service() {
             if (ok && !bookChosen) {
                 speechName = name
                 bookFromServer = true
+                showServerDetails(id, last.getString("author", null), last.getString("series", null), last.getString("cover", null))
                 publishState()
                 // A book whose download was cut short streams again.
                 downloading = engine.serverDownload != null && engine.serverBookFile == null
@@ -607,7 +646,9 @@ class PlaybackService : Service() {
         when (last.getString("kind", null)) {
             "server" -> {
                 val id = last.getString("id", null) ?: return
-                val file = engine.serverBookFile ?: return
+                // A book split across files is not transcribed yet: the
+                // transcriber reads one file.
+                val file = engine.serverBookFile?.takeIf { '\n' !in it } ?: return
                 engine.transcribeStart(dir, transcribeModel, "abs:$id", file, -1, length)
             }
             "file" -> {
@@ -680,7 +721,7 @@ class PlaybackService : Service() {
                                 durationMs = b.optLong("durationMs", -1),
                                 addedMs = b.optLong("addedMs"),
                                 files = b.optInt("files"),
-                                coverUrl = if (b.optBoolean("cover") && base.isNotEmpty()) "$base/api/items/$id/cover?width=240" else null,
+                                coverUrl = if (b.optBoolean("cover") && base.isNotEmpty()) "$base/api/items/$id/cover?width=480" else null,
                                 progress = b.optDouble("progress", -1.0),
                                 finished = b.optBoolean("finished"),
                                 playedMs = b.optLong("playedMs"),
@@ -712,12 +753,16 @@ class PlaybackService : Service() {
                     rememberBook("abs:${book.id}") {
                         putString("kind", "server").putString("id", book.id)
                             .putString("file", file).putString("name", book.title)
+                            .putString("author", book.author.ifEmpty { null })
+                            .putString("series", book.series.ifEmpty { null })
+                            .putString("cover", book.coverUrl)
                     }
+                    showServerDetails(book.id, book.author.ifEmpty { null }, book.series.ifEmpty { null }, book.coverUrl)
                     downloadFailed = false
                     downloading = file == null
                     if (file != null) {
                         followWithTranscriber()
-                        downloadNames.edit().putString(File(file).name, book.title).apply()
+                        nameDownloads(file, book.title)
                     }
                     publishState()
                 }
@@ -750,19 +795,30 @@ class PlaybackService : Service() {
         val file = engine.serverBookFile ?: return
         downloading = false
         last.edit().putString("file", file).apply()
-        speechName?.let { downloadNames.edit().putString(File(file).name, it).apply() }
+        speechName?.let { nameDownloads(file, it) }
         followWithTranscriber()
     }
+
+    /** Note which book [files], a path a line, belong to, for the storage screen. */
+    private fun nameDownloads(files: String, title: String) {
+        val edit = downloadNames.edit()
+        files.lines().forEach { edit.putString(File(it).name, title) }
+        edit.apply()
+    }
+
+    /** The open server book's files, by name: kept when downloads are removed. */
+    private fun openFiles(): Set<String> =
+        engine.serverBookFile?.lines()?.map { File(it).name }?.toSet() ?: emptySet()
 
     /** One file in the download cache. [title] is null for map music. */
     data class Download(val file: File, val title: String?, val bytes: Long, val open: Boolean)
 
     /** What the download cache holds. Reads the folder: call it off the main thread. */
     fun downloads(): List<Download> {
-        val open = engine.serverBookFile?.let { File(it).name }
+        val open = openFiles()
         return (libraryCache.listFiles() ?: emptyArray())
             .filter { it.isFile && !it.name.endsWith(".part") }
-            .map { Download(it, downloadNames.getString(it.name, null), it.length(), it.name == open) }
+            .map { Download(it, downloadNames.getString(it.name, null), it.length(), it.name in open) }
     }
 
     /** Bytes the cached covers take. Reads the folder: call it off the main thread. */
@@ -773,10 +829,10 @@ class PlaybackService : Service() {
      * from that file. Music the map needs again downloads again.
      */
     fun removeDownloads(files: List<File>, covers: Boolean = false): Int {
-        val open = engine.serverBookFile?.let { File(it).name }
+        val open = openFiles()
         var n = 0
         for (f in files) {
-            if (f.name == open) continue
+            if (f.name in open) continue
             if (f.delete()) {
                 n++
                 downloadNames.edit().remove(f.name).apply()
@@ -952,12 +1008,16 @@ class PlaybackService : Service() {
             )
             .build()
         session.setPlaybackState(state)
-        if (speechName != shownTitle || chapter != shownChapter || duration != shownDurationMs) {
+        if (speechName != shownTitle || chapter != shownChapter || duration != shownDurationMs || speechCover !== shownCover) {
             val meta = MediaMetadataCompat.Builder()
                 .putString(MediaMetadataCompat.METADATA_KEY_TITLE, speechName ?: getString(R.string.app_name))
                 .putString(MediaMetadataCompat.METADATA_KEY_ARTIST, chapter ?: "")
+            speechAuthor?.let { meta.putString(MediaMetadataCompat.METADATA_KEY_AUTHOR, it) }
+            speechSeries?.let { meta.putString(MediaMetadataCompat.METADATA_KEY_ALBUM, it) }
+            speechCover?.let { meta.putBitmap(MediaMetadataCompat.METADATA_KEY_ART, it) }
             if (duration > 0) meta.putLong(MediaMetadataCompat.METADATA_KEY_DURATION, duration)
             session.setMetadata(meta.build())
+            shownCover = speechCover
         }
         shownPlaying = playing
         shownPositionMs = position

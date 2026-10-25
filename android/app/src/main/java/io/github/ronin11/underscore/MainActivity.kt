@@ -34,7 +34,9 @@ import androidx.core.content.ContextCompat
 class MainActivity : ServiceActivity() {
 
     private lateinit var bar: androidx.appcompat.widget.Toolbar
+    private lateinit var coverView: android.widget.ImageView
     private lateinit var titleView: TextView
+    private lateinit var seriesView: TextView
     private lateinit var sourceView: TextView
     private lateinit var chapterView: TextView
     private lateinit var captionView: TextView
@@ -131,11 +133,21 @@ class MainActivity : ServiceActivity() {
         bar.subtitle = s.serverBusy ?: if (s.mapLoading) "Loading the map, scanning the music folder…" else s.downloadLine()
 
         titleView.text = s.speechName ?: "No book open"
-        sourceView.text = when {
+        val where = when {
             !loaded -> "Open a file, or a book from your Audiobookshelf server."
             s.bookFromServer -> (s.serverUrl ?: "Audiobookshelf").removePrefix("http://").removePrefix("https://")
             else -> "On this phone"
         }
+        sourceView.text = if (loaded && s.speechAuthor != null) "${s.speechAuthor}  ·  $where" else where
+        val series = if (loaded) s.speechSeries else null
+        seriesView.text = series?.let { "$it  ›" } ?: ""
+        seriesView.visibility = if (series == null) View.GONE else View.VISIBLE
+        val cover = if (loaded) s.speechCover else null
+        if (coverView.tag !== cover) {
+            coverView.setImageBitmap(cover)
+            coverView.tag = cover
+        }
+        coverView.visibility = if (cover == null) View.GONE else View.VISIBLE
         emptyRow.visibility = if (loaded) View.GONE else View.VISIBLE
 
         val chapters = e.chapterCount
@@ -317,6 +329,12 @@ class MainActivity : ServiceActivity() {
         menu.show()
     }
 
+    /** The open book's series on the book screen, in reading order. */
+    private fun openSeries() {
+        val series = service?.speechSeries ?: return
+        startActivity(Intent(this, BooksActivity::class.java).putExtra(BooksActivity.EXTRA_SERIES, series))
+    }
+
     /** The server's books, on their own screen; without a server, the sign-in. */
     private fun serverBooks() {
         val s = service ?: return
@@ -368,9 +386,22 @@ class MainActivity : ServiceActivity() {
             setPadding(dp(24), dp(24), dp(24), dp(16))
         }
 
+        coverView = android.widget.ImageView(this).apply {
+            scaleType = android.widget.ImageView.ScaleType.CENTER_CROP
+            clipToOutline = true
+            background = GradientDrawable().apply { cornerRadius = dp(10).toFloat(); setColor(0x22808080) }
+            contentDescription = "Cover"
+            visibility = View.GONE
+        }
         titleView = label(22f).apply {
             setTypeface(typeface, android.graphics.Typeface.BOLD)
             maxLines = 3
+        }
+        seriesView = label(14f).apply {
+            setTextColor(themeColor(androidx.appcompat.R.attr.colorAccent))
+            setPadding(0, dp(6), 0, 0)
+            visibility = View.GONE
+            setOnClickListener { openSeries() }
         }
         sourceView = label(13f).apply { alpha = 0.7f; setPadding(0, dp(4), 0, 0) }
         chapterView = label(15f).apply {
@@ -383,7 +414,16 @@ class MainActivity : ServiceActivity() {
             maxLines = 4
             setPadding(0, dp(12), 0, 0)
         }
+        val coverSize = minOf(resources.displayMetrics.widthPixels - dp(96), dp(260))
+        body.addView(
+            coverView,
+            LinearLayout.LayoutParams(coverSize, coverSize).apply {
+                gravity = Gravity.CENTER_HORIZONTAL
+                bottomMargin = dp(16)
+            },
+        )
         body.addView(titleView)
+        body.addView(seriesView)
         body.addView(sourceView)
         body.addView(chapterView)
         body.addView(captionView)

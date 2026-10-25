@@ -85,7 +85,8 @@ class SettingsActivity : ServiceActivity() {
             val other = files.filter { it.title == null }
             val covers = s.coverBytes()
             val parts = ArrayList<String>()
-            parts.add(if (books.size == 1) "1 book, ${size(books[0].bytes)}" else "${books.size} books, ${size(books.sumOf { it.bytes })}")
+            val count = books.map { it.title }.distinct().size
+            parts.add("${if (count == 1) "1 book" else "$count books"}, ${size(books.sumOf { it.bytes })}")
             if (other.isNotEmpty()) parts.add("music and other files ${size(other.sumOf { it.bytes })}")
             if (covers > 0) parts.add("covers ${size(covers)}")
             storageSummary = "${parts.joinToString(", ")}. Tap to remove some."
@@ -109,8 +110,14 @@ class SettingsActivity : ServiceActivity() {
     private fun showStorage(s: PlaybackService, files: List<PlaybackService.Download>, covers: Long) {
         class Entry(val label: String, val files: List<PlaybackService.Download>, val covers: Boolean = false)
         val entries = ArrayList<Entry>()
-        for (d in files.filter { it.title != null }.sortedByDescending { it.bytes }) {
-            entries.add(Entry("${d.title}\n${size(d.bytes)}" + if (d.open) "  ·  open now" else "", listOf(d)))
+        // A book split across files is one entry.
+        val books = files.filter { it.title != null }.groupBy { it.title }.values
+        for (parts in books.sortedByDescending { p -> p.sumOf { it.bytes } }) {
+            val open = parts.any { it.open }
+            val label = "${parts[0].title}\n${size(parts.sumOf { it.bytes })}" +
+                (if (parts.size > 1) "  ·  ${parts.size} files" else "") +
+                (if (open) "  ·  open now" else "")
+            entries.add(Entry(label, parts))
         }
         val other = files.filter { it.title == null }
         if (other.isNotEmpty()) {
@@ -144,9 +151,10 @@ class SettingsActivity : ServiceActivity() {
             .setItems(entries.map { it.label }.toTypedArray()) { _, which ->
                 val e = entries[which]
                 when {
-                    e.files.singleOrNull()?.open == true -> toast("That book is open. Open another book first.")
+                    e.files.isNotEmpty() && e.files[0].title != null && e.files.any { it.open } ->
+                        toast("That book is open. Open another book first.")
                     e.covers -> remove("the book covers", emptyList(), true)
-                    else -> remove(e.files.singleOrNull()?.title ?: "the map music and other files", e.files, false)
+                    else -> remove(e.files.firstOrNull()?.title ?: "the map music and other files", e.files, false)
                 }
             }
             .setNeutralButton("Remove all") { _, _ -> remove("all downloads except the open book", files, true) }

@@ -7,8 +7,9 @@
 //! sent anywhere: the only bytes that move are the server's own files,
 //! downwards.
 //!
-//! Only books with a single audio file play for now. Books split across
-//! many files are listed, and `fetch` says why they cannot be played yet.
+//! A book split across many files opens through
+//! [`Audiobookshelf::open_streaming`] as its parts in order; `fetch`, the
+//! one-file path of the [`Library`] trait, says to use that instead.
 //! Podcasts are not listed yet.
 //!
 //! Signing in works two ways. A local account takes a username and a
@@ -77,7 +78,7 @@ pub struct Audiobookshelf {
     /// What the last listing said beyond each [`Item`], for [`Self::shelf`].
     listed: RwLock<HashMap<ItemId, Listed>>,
     /// The audio file behind each book, learned when the book is opened.
-    files: RwLock<HashMap<ItemId, AudioFile>>,
+    files: RwLock<HashMap<ItemId, Vec<AudioFile>>>,
 }
 
 impl std::fmt::Debug for Audiobookshelf {
@@ -117,6 +118,9 @@ pub enum Opened {
     Cached(PathBuf),
     /// Downloading; playable from [`Download::reader`] now.
     Streaming(Download),
+    /// A book split across files: each part, never itself `Parts`, with
+    /// its length when the server knows it.
+    Parts(Vec<(Opened, Option<Duration>)>),
 }
 
 /// What a listing says about a book beyond its [`Item`].
@@ -132,6 +136,8 @@ struct Listed {
 struct AudioFile {
     ino: String,
     ext: String,
+    /// The server's measure of it, for formats that do not carry their length.
+    duration: Option<Duration>,
 }
 
 impl Audiobookshelf {
@@ -433,13 +439,46 @@ impl Audiobookshelf {
     /// comes back as its path. Otherwise the download starts, and the
     /// returned [`Download`] can be read at once; it fetches from wherever
     /// the reader is, and the file lands in the cache when it is whole.
+    /// A book split across files opens as [`Opened::Parts`], one entry a
+    /// file in order. The first part downloads now and each later part when
+    /// the one before it is done, or sooner, a piece at a time, when a
+    /// reader needs it.
     ///
     /// # Errors
-    /// The server could not be reached, or the book is many files, which
-    /// do not play yet.
+    /// The server could not be reached.
     pub fn open_streaming(self: &Arc<Self>, id: &ItemId, cache: &Cache) -> Result<Opened, Error> {
-        let file = self.audio_file(id)?;
-        if let Some(path) = cache.get(&self.name, id, &file.ext) {
+        let files = self.audio_files(id)?;
+        if let [file] = files.as_slice() {
+            return self.open_part(id, id, file, cache, true);
+        }
+        let mut parts = Vec::with_capacity(files.len());
+        let mut previous: Option<Download> = None;
+        for (i, file) in files.iter().enumerate() {
+            let key = ItemId(format!("{id}#{}", file.ino));
+            let opened = self.open_part(id, &key, file, cache, i == 0)?;
+            if let Opened::Streaming(d) = &opened {
+                match &previous {
+                    Some(p) => p.then(d.clone()),
+                    None if i > 0 => d.go(),
+                    None => {}
+                }
+                previous = Some(d.clone());
+            }
+            parts.push((opened, file.duration));
+        }
+        Ok(Opened::Parts(parts))
+    }
+
+    /// One audio file of book `id`, cached under `key`.
+    fn open_part(
+        self: &Arc<Self>,
+        id: &ItemId,
+        key: &ItemId,
+        file: &AudioFile,
+        cache: &Cache,
+        go: bool,
+    ) -> Result<Opened, Error> {
+        if let Some(path) = cache.get(&self.name, key, &file.ext) {
             return Ok(Opened::Cached(path));
         }
         let path = format!("/api/items/{id}/file/{}", file.ino);
@@ -479,14 +518,17 @@ impl Audiobookshelf {
                 resp.into_body().into_with_config().limit(u64::MAX).reader(),
             ))
         };
-        let target = cache.path_for(&self.name, id, &file.ext);
-        Download::start(target, len, Box::new(fetch))
-            .map(Opened::Streaming)
-            .map_err(Error::Io)
+        let target = cache.path_for(&self.name, key, &file.ext);
+        let started = if go {
+            Download::start(target, len, Box::new(fetch))
+        } else {
+            Download::start_paused(target, len, Box::new(fetch))
+        };
+        started.map(Opened::Streaming).map_err(Error::Io)
     }
 
-    /// The one audio file behind a book, learned once and remembered.
-    fn audio_file(&self, id: &ItemId) -> Result<AudioFile, Error> {
+    /// The audio files behind a book, in order, learned once and remembered.
+    fn audio_files(&self, id: &ItemId) -> Result<Vec<AudioFile>, Error> {
         let known = self
             .files
             .read()
@@ -496,19 +538,15 @@ impl Audiobookshelf {
         if let Some(f) = known {
             return Ok(f);
         }
-        let (item, files) = self.expanded(id)?;
-        let n = files.len();
-        let [file] = <[AudioFile; 1]>::try_from(files).map_err(|_| {
-            Error::Unsupported(format!(
-                "\"{}\" is {n} audio files; only single-file books play for now",
-                item.title
-            ))
-        })?;
+        let (_, files) = self.expanded(id)?;
+        if files.is_empty() {
+            return Err(Error::NotFound(id.clone()));
+        }
         self.files
             .write()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .insert(id.clone(), file.clone());
-        Ok(file)
+            .insert(id.clone(), files.clone());
+        Ok(files)
     }
 
     /// A GET for bytes `from..=to` of `path`; `u64::MAX` for to the end.
@@ -545,13 +583,15 @@ impl Audiobookshelf {
             return Err(Error::NotFound(id.clone()));
         }
         let li: LibraryItem = read_json(&mut resp, "GET /api/items/{id}")?;
-        let files: Vec<AudioFile> = li
-            .media
-            .audio_files
-            .iter()
+        let mut audio: Vec<&ServerAudioFile> =
+            li.media.audio_files.iter().filter(|f| !f.exclude).collect();
+        audio.sort_by_key(|f| f.index);
+        let files: Vec<AudioFile> = audio
+            .into_iter()
             .map(|f| AudioFile {
                 ino: f.ino.clone(),
                 ext: f.metadata.ext.trim_start_matches('.').to_ascii_lowercase(),
+                duration: f.duration.filter(|d| *d > 0.0).map(Duration::from_secs_f64),
             })
             .collect();
         let item = li.into_item().ok_or_else(|| Error::NotFound(id.clone()))?;
@@ -678,7 +718,13 @@ impl Library for Audiobookshelf {
     }
 
     fn fetch(&self, id: &ItemId, cache: &Cache) -> Result<PathBuf, Error> {
-        let file = self.audio_file(id)?;
+        let files = self.audio_files(id)?;
+        let [file] = files.as_slice() else {
+            return Err(Error::Unsupported(format!(
+                "{id} is {} audio files; open it with open_streaming",
+                files.len()
+            )));
+        };
         let path = format!("/api/items/{id}/file/{}", file.ino);
         let cached = cache.get_or_fill(&self.name, id, &file.ext, |out| {
             let mut resp = self.get(&path).map_err(io::Error::other)?;
@@ -913,6 +959,12 @@ struct ServerAudioFile {
     ino: String,
     #[serde(default)]
     metadata: FileMetadata,
+    #[serde(default)]
+    index: u32,
+    #[serde(default)]
+    duration: Option<f64>,
+    #[serde(default)]
+    exclude: bool,
 }
 
 #[derive(Deserialize, Default)]

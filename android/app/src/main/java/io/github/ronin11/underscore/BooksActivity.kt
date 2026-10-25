@@ -1,13 +1,10 @@
 package io.github.ronin11.underscore
 
-import android.graphics.Bitmap
-import android.graphics.BitmapFactory
 import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
 import android.text.Editable
 import android.text.InputType
 import android.text.TextWatcher
-import android.util.LruCache
 import android.view.Gravity
 import android.view.Menu
 import android.view.View
@@ -24,12 +21,7 @@ import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.widget.Toolbar
-import java.io.File
-import java.net.HttpURLConnection
-import java.net.URL
 import java.util.Locale
-import java.util.concurrent.ExecutorService
-import java.util.concurrent.Executors
 import io.github.ronin11.underscore.PlaybackService.ServerBook
 
 /**
@@ -67,20 +59,18 @@ class BooksActivity : ServiceActivity() {
     private var problem: String? = null
     private val prefs by lazy { getSharedPreferences("books", MODE_PRIVATE) }
 
-    private val memory = LruCache<String, Bitmap>(80)
-    private val pending = HashSet<String>()
-    private val pool: ExecutorService = Executors.newFixedThreadPool(3)
-    private val coverDir by lazy { File(cacheDir, "covers").apply { mkdirs() } }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         order = Order.entries.firstOrNull { it.name == prefs.getString("order", null) } ?: Order.PLAYED
         show = Show.entries.firstOrNull { it.name == prefs.getString("show", null) } ?: Show.ALL
         super.onCreate(savedInstanceState)
-    }
-
-    override fun onDestroy() {
-        pool.shutdownNow()
-        super.onDestroy()
+        // From the player's series line: that series, in reading order, whatever the saved view.
+        intent.getStringExtra(EXTRA_SERIES)?.let { series ->
+            order = Order.SERIES
+            show = Show.ALL
+            search.setText(seriesName(series))
+            bar.title = seriesName(series)
+        }
     }
 
     override fun onServiceReady() {
@@ -196,10 +186,6 @@ class BooksActivity : ServiceActivity() {
             finish()
             return
         }
-        if (!book.playable) {
-            toast("\"${book.title}\" is ${book.files} audio files. Only single-file books play for now.")
-            return
-        }
         val app = applicationContext
         s.openServerBook(book) { why ->
             Toast.makeText(app, why ?: "Loaded ${book.title}", Toast.LENGTH_LONG).show()
@@ -312,7 +298,6 @@ class BooksActivity : ServiceActivity() {
             val started = b.progress >= 0 && !b.finished
             h.progress.visibility = if (started) View.VISIBLE else View.GONE
             h.progress.progress = (b.progress.coerceIn(0.0, 1.0) * 1000).toInt()
-            view.alpha = if (b.playable) 1f else 0.5f
             cover(b, h.cover)
             return view
         }
@@ -322,13 +307,12 @@ class BooksActivity : ServiceActivity() {
         val parts = ArrayList<String>()
         if (b.open) parts.add("Open now")
         when {
-            !b.playable -> parts.add("${b.files} files, does not play yet")
             b.finished -> parts.add("Finished")
             b.progress >= 0 && b.durationMs > 0 ->
                 parts.add("${(b.progress * 100).toInt()}%  ·  ${fmt(((1 - b.progress) * b.durationMs).toLong())} left")
             b.progress >= 0 -> parts.add("${(b.progress * 100).toInt()}%")
         }
-        if (b.durationMs > 0 && (b.progress < 0 || b.finished || !b.playable)) parts.add(fmt(b.durationMs))
+        if (b.durationMs > 0 && (b.progress < 0 || b.finished)) parts.add(fmt(b.durationMs))
         return parts.joinToString("  ·  ")
     }
 
@@ -373,45 +357,19 @@ class BooksActivity : ServiceActivity() {
     /** Show the book's cover in [into], fetching it in the background the first time. */
     private fun cover(book: ServerBook, into: ImageView) {
         into.setTag(R.id.cover_book, book.id)
-        val cached = memory.get(book.id)
-        into.setImageBitmap(cached)
-        val url = book.coverUrl
-        if (cached != null || url == null || !pending.add(book.id)) return
-        pool.execute {
-            val bitmap = runCatching { loadCover(book.id, url) }.getOrNull()
-            ui.post {
-                pending.remove(book.id)
-                if (bitmap == null) return@post
-                memory.put(book.id, bitmap)
-                for (i in 0 until listView.childCount) {
-                    val h = listView.getChildAt(i).tag as? Holder ?: continue
-                    if (h.cover.getTag(R.id.cover_book) == book.id) h.cover.setImageBitmap(bitmap)
-                }
+        into.setImageBitmap(Covers.cached(book.id))
+        val url = book.coverUrl ?: return
+        Covers.load(this, book.id, url) { bitmap ->
+            for (i in 0 until listView.childCount) {
+                val h = listView.getChildAt(i).tag as? Holder ?: continue
+                if (h.cover.getTag(R.id.cover_book) == book.id) h.cover.setImageBitmap(bitmap)
             }
         }
-    }
-
-    /** From the cache folder, or from the server into it. Runs on [pool]. */
-    private fun loadCover(id: String, url: String): Bitmap? {
-        val file = File(coverDir, id.replace(Regex("[^A-Za-z0-9_-]"), "_"))
-        if (!file.isFile) {
-            val conn = URL(url).openConnection() as HttpURLConnection
-            conn.connectTimeout = 10_000
-            conn.readTimeout = 20_000
-            try {
-                if (conn.responseCode != 200) return null
-                val bytes = conn.inputStream.use { it.readBytes() }
-                val part = File(coverDir, "${file.name}.part")
-                part.writeBytes(bytes)
-                part.renameTo(file)
-            } finally {
-                conn.disconnect()
-            }
-        }
-        return BitmapFactory.decodeFile(file.path)
     }
 
     companion object {
+        /** Open on one series: its books in reading order. */
+        const val EXTRA_SERIES = "series"
         private val ARTICLE = Regex("^(the|a|an)\\s+", RegexOption.IGNORE_CASE)
         private val NUMBERED = Regex("^(.*?)\\s*#\\s*([0-9]+(?:\\.[0-9]+)?)")
 

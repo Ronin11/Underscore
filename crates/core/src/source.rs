@@ -177,6 +177,116 @@ impl Source for SliceSource {
     }
 }
 
+/// Several sources played back to back as one: a book split across
+/// files. Seeks and positions are in the whole book's time. Each part's
+/// length is fixed when the chain is made, from the part itself or from
+/// what the caller knows, so moving between parts needs no probing and
+/// reading allocates nothing.
+pub struct Chain {
+    parts: Vec<Box<dyn Source>>,
+    /// Where each part starts in the whole.
+    starts: Vec<Duration>,
+    total: Duration,
+    current: usize,
+    channels: usize,
+    sample_rate: u32,
+}
+
+impl Chain {
+    /// Join `parts`, which must share a channel count and sample rate.
+    /// `lengths` gives each part's length where the part does not know it;
+    /// it may be shorter than `parts`. Returns `None` for no parts, parts
+    /// that differ in format, or a part whose length is unknown.
+    #[must_use]
+    pub fn new(parts: Vec<Box<dyn Source>>, lengths: &[Duration]) -> Option<Self> {
+        let first = parts.first()?;
+        let (channels, sample_rate) = (first.channels(), first.sample_rate());
+        let mut starts = Vec::with_capacity(parts.len());
+        let mut total = Duration::ZERO;
+        for (i, p) in parts.iter().enumerate() {
+            if p.channels() != channels || p.sample_rate() != sample_rate {
+                return None;
+            }
+            starts.push(total);
+            total += p.duration().or_else(|| lengths.get(i).copied())?;
+        }
+        Some(Self {
+            parts,
+            starts,
+            total,
+            current: 0,
+            channels,
+            sample_rate,
+        })
+    }
+
+    /// Where each part starts in the whole.
+    #[must_use]
+    pub fn starts(&self) -> &[Duration] {
+        &self.starts
+    }
+}
+
+impl std::fmt::Debug for Chain {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Chain")
+            .field("parts", &self.parts.len())
+            .field("total", &self.total)
+            .field("current", &self.current)
+            .finish_non_exhaustive()
+    }
+}
+
+impl Source for Chain {
+    fn read(&mut self, out: &mut [f32]) -> usize {
+        let ch = self.channels;
+        let want = out.len() / ch;
+        let mut done = 0;
+        while done < want && self.current < self.parts.len() {
+            let got = self.parts[self.current].read(&mut out[done * ch..want * ch]);
+            done += got;
+            if done < want {
+                // This part ended; the next starts from its beginning.
+                self.current += 1;
+                if let Some(next) = self.parts.get_mut(self.current) {
+                    next.seek(Duration::ZERO);
+                }
+            }
+        }
+        done
+    }
+
+    fn channels(&self) -> usize {
+        self.channels
+    }
+
+    fn sample_rate(&self) -> u32 {
+        self.sample_rate
+    }
+
+    fn seek(&mut self, to: Duration) -> bool {
+        let to = to.min(self.total);
+        let i = self.starts.partition_point(|s| *s <= to).saturating_sub(1);
+        if !self.parts[i].seek(to.saturating_sub(self.starts[i])) {
+            return false;
+        }
+        self.current = i;
+        true
+    }
+
+    fn position(&self) -> Option<Duration> {
+        if self.current >= self.parts.len() {
+            return Some(self.total);
+        }
+        let inner = self.parts[self.current].position()?;
+        Some(self.starts[self.current] + inner)
+    }
+
+    fn duration(&self) -> Option<Duration> {
+        Some(self.total)
+    }
+}
+
 /// A source scaled by a fixed gain. For level offsets that belong to the
 /// material rather than to the listener's level control.
 pub struct Gain {
@@ -272,6 +382,37 @@ mod tests {
         assert!(g.seek(Duration::ZERO));
         assert_eq!(g.read(&mut out[..2]), 1);
         assert_eq!(&out[..2], &[0.5, -0.5]);
+    }
+
+    #[test]
+    fn chain_plays_parts_in_order_and_seeks_across_them() {
+        let a = Box::new(SliceSource::new(vec![1.0, 2.0, 3.0], 1, 10));
+        let b = Box::new(SliceSource::new(vec![4.0, 5.0], 1, 10));
+        let mut c = Chain::new(vec![a, b], &[]).unwrap();
+        assert_eq!(c.duration(), Some(Duration::from_millis(500)));
+        assert_eq!(c.starts(), &[Duration::ZERO, Duration::from_millis(300)]);
+        let mut out = [0.0; 4];
+        assert_eq!(c.read(&mut out), 4);
+        assert_eq!(out, [1.0, 2.0, 3.0, 4.0]);
+        assert_eq!(c.position(), Some(Duration::from_millis(400)));
+        assert_eq!(c.read(&mut out), 1);
+        assert_eq!(c.read(&mut out), 0);
+        // Back into the first part, then across the join.
+        assert!(c.seek(Duration::from_millis(200)));
+        assert_eq!(c.position(), Some(Duration::from_millis(200)));
+        assert_eq!(c.read(&mut out[..2]), 2);
+        assert_eq!(&out[..2], &[3.0, 4.0]);
+        assert!(c.seek(Duration::from_millis(400)));
+        assert_eq!(c.read(&mut out[..1]), 1);
+        assert_eq!(out[0], 5.0);
+    }
+
+    #[test]
+    fn chain_refuses_mismatched_parts() {
+        let a = Box::new(SliceSource::new(vec![0.0; 4], 1, 10));
+        let b = Box::new(SliceSource::new(vec![0.0; 4], 2, 10));
+        assert!(Chain::new(vec![a, b], &[]).is_none());
+        assert!(Chain::new(Vec::new(), &[]).is_none());
     }
 
     #[test]

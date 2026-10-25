@@ -22,10 +22,10 @@ use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use underscore_core::{LayerId, Player, PlayerConfig, RewindPolicy, SleepTimer, Source};
+use underscore_core::{Chain, LayerId, Player, PlayerConfig, RewindPolicy, SleepTimer, Source};
 use underscore_decode::{Chapter, FileSource, MediaSource, probe, probe_path};
 use underscore_library::{
-    Audiobookshelf, Cache, Credentials, Download, ItemId, LocalLibrary, OpenIdStart, Role,
+    Audiobookshelf, Cache, Credentials, Download, ItemId, LocalLibrary, OpenIdStart, Opened, Role,
     StreamReader, Subsonic, SubsonicLogin,
 };
 use underscore_map::Map;
@@ -63,8 +63,8 @@ pub struct Bridge {
     book: Option<ItemId>,
     /// Where that book sits in the cache, so the app can find it again.
     book_file: Option<String>,
-    /// That book's download, while it is still coming down.
-    download: Option<Download>,
+    /// That book's downloads, one a file, while any is still coming down.
+    downloads: Vec<Download>,
     /// The music server (Navidrome or any Subsonic-compatible one), once
     /// signed in. Maps play from it instead of a folder when it is set.
     music_server: Option<Arc<Subsonic>>,
@@ -110,7 +110,7 @@ impl Bridge {
             server: None,
             book: None,
             book_file: None,
-            download: None,
+            downloads: Vec::new(),
             music_server: None,
             openid: None,
         }
@@ -168,7 +168,7 @@ impl Bridge {
         if ok {
             self.book = None;
             self.book_file = None;
-            self.download = None;
+            self.downloads.clear();
             self.set_chapters(chapters);
         }
         ok
@@ -194,17 +194,35 @@ impl Bridge {
         ok
     }
 
-    /// Load a book fetched from the server, by its cached path. The
-    /// server's chapter list stands in when the file carries none.
+    /// Load a book fetched from the server, by its cached path, or its
+    /// paths a line each when it is split across files. The server's
+    /// chapter list stands in when the file carries none.
     pub fn load_server_book(&mut self, path: &str, id: ItemId, chapters: Vec<Chapter>) -> bool {
-        let ok = self.load_speech_path(path);
+        let ok = if path.contains('\n') {
+            let parts: Option<Vec<Box<dyn Source>>> = path
+                .lines()
+                .map(|p| {
+                    FileSource::open_path(p, self.rate, self.channels)
+                        .ok()
+                        .map(|s| Box::new(s) as Box<dyn Source>)
+                })
+                .collect();
+            let chain = parts.and_then(|p| Chain::new(p, &[]));
+            let ok = chain.is_some_and(|c| self.player.set_speech_source(Box::new(c)).is_ok());
+            if ok {
+                self.set_chapters(Vec::new());
+            }
+            ok
+        } else {
+            self.load_speech_path(path)
+        };
         if ok {
             if self.chapters.is_empty() && !chapters.is_empty() {
                 self.set_chapters(chapters);
             }
             self.book = Some(id);
             self.book_file = Some(path.to_string());
-            self.download = None;
+            self.downloads.clear();
         }
         ok
     }
@@ -219,7 +237,7 @@ impl Bridge {
         rate: u32,
         channels: usize,
         at: Option<Duration>,
-    ) -> Option<(Box<dyn Source>, Vec<Chapter>)> {
+    ) -> Option<Prepared> {
         let path = download.finished();
         let hint = download.extension();
         let chapters = download
@@ -242,20 +260,80 @@ impl Bridge {
         if let Some(at) = at {
             source.seek(at);
         }
-        Some((source, chapters))
+        Some(Prepared {
+            source,
+            chapters,
+            files: vec![download.path().to_string_lossy().into_owned()],
+            downloads: vec![download.clone()],
+        })
     }
 
-    /// Play a server book that is still downloading, from a source made by
-    /// [`Bridge::prepare_stream`]. The server's chapters stand in when the
-    /// file has none.
+    /// Get a server book split across files ready to play: one source over
+    /// all the parts, moved to `at`, the downloads still running, and every
+    /// part's cache path. Waits on the network for each part's header, so
+    /// call it outside the lock.
+    #[must_use]
+    pub fn prepare_parts(
+        parts: Vec<(Opened, Option<Duration>)>,
+        rate: u32,
+        channels: usize,
+        at: Option<Duration>,
+    ) -> Option<Prepared> {
+        let mut sources: Vec<Box<dyn Source>> = Vec::with_capacity(parts.len());
+        let mut lengths = Vec::with_capacity(parts.len());
+        let mut downloads = Vec::new();
+        let mut files = Vec::with_capacity(parts.len());
+        for (part, length) in parts {
+            let source = match part {
+                Opened::Cached(p) => {
+                    files.push(p.to_string_lossy().into_owned());
+                    FileSource::open_path(p, rate, channels).ok()?
+                }
+                Opened::Streaming(d) => {
+                    let hint = d.extension();
+                    files.push(d.path().to_string_lossy().into_owned());
+                    let src = FileSource::open(
+                        Box::new(Streamed(d.reader().ok()?)),
+                        hint.as_deref(),
+                        rate,
+                        channels,
+                    )
+                    .ok()?;
+                    downloads.push(d);
+                    src
+                }
+                Opened::Parts(_) => return None,
+            };
+            sources.push(Box::new(source));
+            lengths.push(length.unwrap_or_default());
+        }
+        let mut chain: Box<dyn Source> = Box::new(Chain::new(sources, &lengths)?);
+        if let Some(at) = at {
+            chain.seek(at);
+        }
+        Some(Prepared {
+            source: chain,
+            chapters: Vec::new(),
+            files,
+            downloads,
+        })
+    }
+
+    /// Play a server book that is still downloading, from
+    /// [`Bridge::prepare_stream`] or [`Bridge::prepare_parts`]. The
+    /// server's chapters stand in when the file has none.
     pub fn load_server_stream(
         &mut self,
-        source: Box<dyn Source>,
-        file_chapters: Vec<Chapter>,
+        prepared: Prepared,
         server_chapters: Vec<Chapter>,
         id: ItemId,
-        download: Download,
     ) -> bool {
+        let Prepared {
+            source,
+            chapters: file_chapters,
+            files,
+            downloads,
+        } = prepared;
         if self.player.set_speech_source(source).is_err() {
             return false;
         }
@@ -266,15 +344,15 @@ impl Bridge {
         };
         self.set_chapters(chapters);
         self.book = Some(id);
-        self.book_file = None;
-        self.download = Some(download);
+        self.book_file = Some(files.join("\n"));
+        self.downloads = downloads;
         true
     }
 
-    /// The loaded server book's download, while it is coming down.
+    /// The loaded server book's downloads, while any is coming down.
     #[must_use]
-    pub fn download(&self) -> Option<Download> {
-        self.download.clone()
+    pub fn downloads(&self) -> Vec<Download> {
+        self.downloads.clone()
     }
 
     /// Sign in to an Audiobookshelf server. Does network I/O: call it off
@@ -351,7 +429,7 @@ impl Bridge {
         if server.is_none() {
             self.book = None;
             self.book_file = None;
-            self.download = None;
+            self.downloads.clear();
         }
         self.server = server;
     }
@@ -372,10 +450,11 @@ impl Bridge {
     #[must_use]
     /// Not while it is still downloading: the file is not whole yet.
     pub fn server_book_file(&self) -> Option<String> {
-        match &self.download {
-            Some(d) => d.finished().and_then(|p| p.to_str().map(ToOwned::to_owned)),
-            None => self.book_file.clone(),
+        // Every part whole, or nothing.
+        if self.downloads.iter().any(|d| d.finished().is_none()) {
+            return None;
         }
+        self.book_file.clone()
     }
 
     /// Sign in to a music server. Does network I/O: call it off the audio
@@ -740,6 +819,18 @@ impl Bridge {
     }
 }
 
+/// A server book made ready to play outside the lock.
+pub struct Prepared {
+    /// The decoder, already at the listener's place.
+    pub source: Box<dyn Source>,
+    /// Chapter marks from the file, if any.
+    pub chapters: Vec<Chapter>,
+    /// Where each file will be in the cache.
+    pub files: Vec<String>,
+    /// The downloads still running.
+    pub downloads: Vec<Download>,
+}
+
 /// A downloading file, for the decoder.
 struct Streamed(StreamReader);
 
@@ -832,6 +923,23 @@ mod tests {
         assert!(!b.seek_chapter(3));
         b.seek(Duration::from_secs(4));
         assert_eq!(b.current_chapter(), Some(1));
+    }
+
+    /// A book in two files plays as one: twice as long, its own chapter
+    /// marks set aside, both paths remembered.
+    #[test]
+    fn a_book_in_two_files_is_one_timeline() {
+        let mut one = Bridge::new(48_000, 2);
+        assert!(one.load_speech_path(&fixture()));
+        let single = one.duration().unwrap();
+        let mut b = Bridge::new(48_000, 2);
+        let both = format!("{}\n{}", fixture(), fixture());
+        assert!(b.load_server_book(&both, ItemId("li9".into()), Vec::new()));
+        assert_eq!(b.duration(), Some(single * 2));
+        assert!(b.chapters().is_empty());
+        assert_eq!(b.server_book_file(), Some(both));
+        b.seek(single + Duration::from_secs(1));
+        assert_eq!(b.position(), single + Duration::from_secs(1));
     }
 
     /// A server book remembers its cached file; a local book forgets it.

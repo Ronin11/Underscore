@@ -83,8 +83,7 @@ screen: every book the account can see, with its cover, author, series,
 and how far the listener is. A search box matches title, author, and
 series; a row of filters picks all, in progress, not started, or
 finished; Sort orders by last played, recently added, title, author, or
-series in reading order. Books split across many files are shown dimmed,
-since only single-file books play for now. Covers come from the server,
+series in reading order. Covers come from the server,
 which serves them without a login, and are kept in the app's cache.
 Picking a book downloads its file into the app's
 cache, the same per-stream cache the maps use, loads it, and jumps to
@@ -104,8 +103,18 @@ add `underscore://oauth` to the allowed mobile redirect URIs in the
 server's authentication settings. If the official Audiobookshelf app is
 also installed, Android may ask which app should open the stock address.
 
-Only books that are one audio file play for now; a book split across
-many files is listed, and picking it says so. Podcasts are not listed.
+A book split across many files plays as one: the bridge joins the parts
+with `Chain` in `crates/core`, using the server's length for each part,
+and seeks and positions run across the whole book. The first part
+downloads at once and each later part when the one before is done, or
+sooner, a piece at a time, when playback or a seek reaches it. The server's
+chapter list is the book's chapters. The phone transcriber reads one file,
+so it skips these books for now. Podcasts are not listed.
+
+The player shows the book's cover, author, and series. The series line
+opens the book screen on that series, in reading order. A book from a file
+shows the art and author inside it. The cover and author also go to the
+lock screen and the media controls.
 A book plays while it downloads. The file comes down into its cache
 file a range at a time, and the player reads what is in; a seek, or an
 M4B that keeps its index at the end, sends the downloader to that spot

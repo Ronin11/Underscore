@@ -78,6 +78,11 @@ struct State {
     /// Every byte is in and the file is in its place.
     done: bool,
     error: Option<String>,
+    /// Allowed to download the whole file. A paused download fetches only
+    /// what a reader is waiting for.
+    go: bool,
+    /// Starts when this one is done: the next part of a book.
+    next: Option<Download>,
 }
 
 struct Shared {
@@ -119,6 +124,37 @@ impl Download {
     /// # Errors
     /// The partial file could not be created.
     pub fn start(path: PathBuf, len: u64, fetch: Box<RangeFetch>) -> io::Result<Self> {
+        Self::begin(path, len, fetch, true)
+    }
+
+    /// Like [`Download::start`], but only fetching what a reader waits
+    /// for until [`Download::go`], or until the download before it, given
+    /// [`Download::then`], is done. For the later parts of a book.
+    ///
+    /// # Errors
+    /// The partial file could not be created.
+    pub fn start_paused(path: PathBuf, len: u64, fetch: Box<RangeFetch>) -> io::Result<Self> {
+        Self::begin(path, len, fetch, false)
+    }
+
+    /// Let a paused download fetch everything.
+    pub fn go(&self) {
+        self.shared.lock().go = true;
+        self.shared.changed.notify_all();
+    }
+
+    /// Start `next` when this one is done.
+    pub fn then(&self, next: Download) {
+        let mut st = self.shared.lock();
+        if st.done {
+            drop(st);
+            next.go();
+        } else {
+            st.next = Some(next);
+        }
+    }
+
+    fn begin(path: PathBuf, len: u64, fetch: Box<RangeFetch>, go: bool) -> io::Result<Self> {
         let part = PathBuf::from(format!("{}.part", path.display()));
         let file = OpenOptions::new()
             .create(true)
@@ -129,7 +165,10 @@ impl Download {
         file.set_len(len)?;
         let this = Self {
             shared: Arc::new(Shared {
-                state: Mutex::new(State::default()),
+                state: Mutex::new(State {
+                    go,
+                    ..State::default()
+                }),
                 changed: Condvar::new(),
                 len,
             }),
@@ -153,6 +192,12 @@ impl Download {
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.shared.len == 0
+    }
+
+    /// Where the file will be in the cache once it is whole.
+    #[must_use]
+    pub fn path(&self) -> &std::path::Path {
+        &self.path
     }
 
     /// The file's extension, such as `m4b`: a hint for the decoder.
@@ -207,8 +252,12 @@ impl Download {
             },
             Err(e) => st.error = Some(format!("downloading: {e}")),
         }
+        let next = st.next.take();
         drop(st);
         self.shared.changed.notify_all();
+        if let Some(next) = next {
+            next.go();
+        }
     }
 
     fn fill(&self, file: &File, fetch: &RangeFetch) -> io::Result<()> {
@@ -216,10 +265,18 @@ impl Download {
         let mut buf = vec![0u8; 1 << 16];
         loop {
             // Where a reader waits, if anywhere; otherwise the first gap.
-            let start = {
+            // Paused, wait for a reader or for the go.
+            let (start, go) = {
                 let mut st = self.shared.lock();
+                while !st.go && st.want.is_none_or(|w| st.have.run_end(w).is_some()) {
+                    st = self
+                        .shared
+                        .changed
+                        .wait(st)
+                        .unwrap_or_else(std::sync::PoisonError::into_inner);
+                }
                 let wanted = st.want.take().filter(|w| st.have.run_end(*w).is_none());
-                st.have.next_gap(wanted.unwrap_or(0))
+                (st.have.next_gap(wanted.unwrap_or(0)), st.go)
             };
             let start = if start >= len {
                 let first = self.shared.lock().have.next_gap(0);
@@ -249,7 +306,9 @@ impl Download {
                         .is_some_and(|w| st.have.run_end(w).is_none() && (w < at || w > at + NEAR));
                     // Ran into bytes already here: pick the next gap.
                     let overlap = at < len && st.have.run_end(at).is_some();
-                    elsewhere || overlap || at >= len
+                    // Paused: a little past what the reader asked for is enough.
+                    let enough = !go && !st.go && at >= start + NEAR;
+                    elsewhere || overlap || enough || at >= len
                 };
                 self.shared.changed.notify_all();
                 if switch {
@@ -304,6 +363,7 @@ impl Read for StreamReader {
                 return Err(io::Error::other(e.clone()));
             }
             st.want = Some(self.pos);
+            self.shared.changed.notify_all();
             let (next, timeout) = self
                 .shared
                 .changed
@@ -372,7 +432,7 @@ mod tests {
         impl Read for Drip {
             fn read(&mut self, out: &mut [u8]) -> io::Result<usize> {
                 std::thread::sleep(Duration::from_millis(2));
-                let n = (self.data.len() - self.at).min(out.len()).min(512);
+                let n = (self.data.len() - self.at).min(out.len()).min(16 << 10);
                 out[..n].copy_from_slice(&self.data[self.at..self.at + n]);
                 self.at += n;
                 Ok(n)
@@ -390,7 +450,8 @@ mod tests {
 
     #[test]
     fn reads_while_downloading_and_jumps_to_the_end() {
-        let data: Vec<u8> = (0..200_000u32).map(|i| (i % 251) as u8).collect();
+        // Bigger than NEAR, so the tail is worth a request of its own.
+        let data: Vec<u8> = (0..(4u32 << 20)).map(|i| (i % 251) as u8).collect();
         let dir = std::env::temp_dir().join(format!("underscore-stream-{}", std::process::id()));
         fs::create_dir_all(&dir).unwrap();
         let path = dir.join("book.m4b");
@@ -431,6 +492,53 @@ mod tests {
         assert_eq!(dl.finished(), Some(path.clone()));
         assert_eq!(fs::read(&path).unwrap(), data);
         let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_paused_part_fetches_only_what_is_read_until_its_turn() {
+        let data: Vec<u8> = (0..(3 << 20) as u32).map(|i| (i % 249) as u8).collect();
+        let dir =
+            std::env::temp_dir().join(format!("underscore-stream-parts-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let (one, two) = (dir.join("1.mp3"), dir.join("2.mp3"));
+        let _ = fs::remove_file(&one);
+        let _ = fs::remove_file(&two);
+        let calls = Arc::new(AtomicUsize::new(0));
+        let small = data[..1000].to_vec();
+        let first = Download::start(one.clone(), 1000, slow(small, Arc::clone(&calls))).unwrap();
+        let second =
+            Download::start_paused(two.clone(), data.len() as u64, fast(data.clone())).unwrap();
+        // A reader of the paused part gets its bytes, and no more comes down than it needs.
+        let mut r = second.reader().unwrap();
+        let mut head = vec![0u8; 100];
+        r.read_exact(&mut head).unwrap();
+        assert_eq!(head, data[..100]);
+        std::thread::sleep(Duration::from_millis(100));
+        assert!(
+            second.received() < 2 << 20,
+            "paused, but fetched {}",
+            second.received()
+        );
+        // Its turn comes when the part before it is done.
+        first.then(second.clone());
+        for _ in 0..500 {
+            if second.finished().is_some() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert_eq!(fs::read(&two).unwrap(), data);
+        assert!(first.finished().is_some());
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    /// A quick server, for sizes the slow one would take too long over.
+    fn fast(data: Vec<u8>) -> Box<RangeFetch> {
+        let data = Arc::new(data);
+        Box::new(move |from| {
+            let from = usize::try_from(from).unwrap();
+            Ok(Box::new(io::Cursor::new(data[from..].to_vec())) as Box<dyn Read + Send>)
+        })
     }
 
     #[test]
