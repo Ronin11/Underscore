@@ -17,11 +17,12 @@ A Kotlin shell over the Rust engine. The files that matter:
   code. No layout XML, so nothing to keep in sync. Each tab is its own
   activity; switching swaps them without animation, and the player stays
   underneath, so Back from any tab lands on it.
-- `MainActivity.kt` is the Player tab: a tool row along the top for
-  speed, sleep, chapters, and music, then the book and chapter, a scrub
-  bar across the current chapter with time left, and previous and next
-  chapter around the skip and play buttons. The app bar's menu opens a
-  file and keeps the book offline.
+- `MainActivity.kt` is the Player tab: speed, sleep, and music in the
+  app bar, then the book and chapter (tap the chapter line for the
+  list), a scrub bar across the current chapter with time left, and
+  previous and next chapter around the skip and play buttons. It has no
+  menu. Opening a file and keeping a book offline live on the Library
+  tab, and storage on Settings.
 - `BooksActivity.kt` is the Library tab: the server's books, and a file
   from the phone under its menu.
 - `ConnectionsActivity.kt` is the Connections tab: the Audiobookshelf

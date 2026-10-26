@@ -1181,18 +1181,8 @@ class PlaybackService : Service() {
         if (on) fetchKept() else keepInBudget()
     }
 
-    /** The open server book's [keepOffline]. */
-    fun keepOpenBookOffline(on: Boolean) {
-        val key = last.getString("key", null)?.takeIf { it.startsWith("abs:") } ?: return
-        storage.update(key, speechName ?: key) { it.copy(pinned = on) }
-        if (on) fetchKept() else keepInBudget()
-    }
-
     /** The open book's key, such as `abs:<id>`, or null. */
     val openKey: String? get() = last.getString("key", null)
-
-    /** Whether the open book is kept offline. */
-    val openBookKept: Boolean get() = last.getString("key", null)?.let { storage.book(it)?.pinned } == true
 
     /** What a book kept offline still lacks on the phone. */
     private fun lacks(b: Storage.Book): Boolean {

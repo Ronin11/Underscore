@@ -8,7 +8,6 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.view.Gravity
-import android.view.Menu
 import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
@@ -52,8 +51,6 @@ class MainActivity : ServiceActivity() {
     private lateinit var musicLine: TextView
     private lateinit var speedTile: Tile
     private lateinit var sleepTile: Tile
-    private var keepItem: android.view.MenuItem? = null
-    private lateinit var chaptersTile: Tile
     private lateinit var musicTile: Tile
     private var scrubbing = false
     private val sleepSetup = SleepSetup(this, { service }) { refresh() }
@@ -73,25 +70,6 @@ class MainActivity : ServiceActivity() {
         ) {
             askNotifications.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
-    }
-
-    override fun onCreateOptionsMenu(menu: Menu): Boolean {
-        menu.add("Open a file…").setOnMenuItemClickListener { pickSpeech.launch(AUDIO_TYPES); true }
-        keepItem = menu.add("Keep this book offline").apply {
-            isCheckable = true
-            setOnMenuItemClickListener {
-                service?.let { s -> s.keepOpenBookOffline(!s.openBookKept) }
-                true
-            }
-        }
-        return true
-    }
-
-    override fun onPrepareOptionsMenu(menu: Menu): Boolean {
-        val s = service
-        keepItem?.isVisible = s?.bookFromServer == true
-        keepItem?.isChecked = s?.openBookKept == true
-        return super.onPrepareOptionsMenu(menu)
     }
 
     private fun loadBook(uri: Uri) {
@@ -208,9 +186,6 @@ class MainActivity : ServiceActivity() {
             s.settings.sleepAuto -> "Auto"
             else -> "Off"
         }
-        chaptersTile.value.text = if (inChapter) "${chapter + 1} of $chapters" else if (chapters > 0) "$chapters" else "None"
-        chaptersTile.view.isEnabled = chapters > 0
-        chaptersTile.view.alpha = if (chapters > 0) 1f else 0.4f
         musicTile.value.text = if (!e.musicEnabled) "Off" else if (e.hasMap) "Map" else "On"
 
         if (s.settings.keepScreenOn && playing) {
@@ -383,16 +358,18 @@ class MainActivity : ServiceActivity() {
         go(Tab.LIBRARY)
     }
 
-    /** One of the tools along the bottom: a small caption over a value. */
+    /** One of the tools in the header: a small caption under a value. */
     class Tile(val view: View, val value: TextView)
 
     private fun tile(caption: String, onClick: (View) -> Unit): Tile {
-        val value = label(15f).apply { setTypeface(typeface, android.graphics.Typeface.BOLD) }
-        val cap = label(11f).apply { text = caption; alpha = 0.7f }
+        val paper = ContextCompat.getColor(this, R.color.paper)
+        val value = label(14f).apply { setTypeface(typeface, android.graphics.Typeface.BOLD); setTextColor(paper); maxLines = 1 }
+        val cap = label(10f).apply { text = caption; alpha = 0.7f; setTextColor(paper) }
         val box = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER
-            setPadding(dp(4), dp(10), dp(4), dp(10))
+            minimumWidth = dp(52)
+            setPadding(dp(6), dp(4), dp(6), dp(4))
             isClickable = true
             isFocusable = true
             setBackgroundResource(selectableBackground())
@@ -419,20 +396,18 @@ class MainActivity : ServiceActivity() {
         bar = toolbar("underscore", up = false)
         root.addView(bar)
 
-        // The tools along the top.
+        // Speed, sleep and music sit in the header, at the end. Chapters
+        // are the chapter line under the title.
         speedTile = tile("Speed") { speedDialog() }
         sleepTile = tile("Sleep") { sleepMenu(it) }
-        chaptersTile = tile("Chapters") { showChapters() }
         musicTile = tile("Music") { musicMenu(it) }
-        root.addView(
+        bar.addView(
             LinearLayout(this).apply {
                 orientation = LinearLayout.HORIZONTAL
-                for (t in listOf(speedTile, sleepTile, chaptersTile, musicTile)) {
-                    addView(t.view, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-                }
+                for (t in listOf(speedTile, sleepTile, musicTile)) addView(t.view)
             },
+            androidx.appcompat.widget.Toolbar.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.MATCH_PARENT, Gravity.END),
         )
-        root.addView(divider())
 
         val body = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
