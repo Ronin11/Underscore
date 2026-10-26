@@ -93,14 +93,26 @@ class Storage(context: Context) {
     private fun mapFile(key: String): File =
         File(mapsDir, "%016x.toml".format(key.fold(-0x340d631b7bdddcdbL) { h, c -> (h xor c.code.toLong()) * 0x100000001b3L }))
 
+    /** What a trim left: the bytes in the cache, and with ask first, the books that would make room. */
+    data class Trimmed(val bytes: Long, val suggest: List<String>)
+
     /**
      * Ask Rust what to drop and drop it: books least recently played,
      * with the files only they used, until the cache fits [budget] bytes
      * (null for no limit), and the books in [remove] whatever the budget.
-     * [open] and [busy] stay. Returns the bytes left. Reads and deletes
+     * With [askFirst] no book goes to make room; the ones that would come
+     * back as suggestions. [open] and [busy] stay. Reads and deletes
      * files: not on the main thread.
      */
-    fun trim(engine: Engine, cache: File, budget: Long?, open: String?, busy: Set<String>, remove: Collection<String> = emptyList()): Long {
+    fun trim(
+        engine: Engine,
+        cache: File,
+        budget: Long?,
+        open: String?,
+        busy: Set<String>,
+        remove: Collection<String> = emptyList(),
+        askFirst: Boolean = false,
+    ): Trimmed {
         val files = (cache.listFiles() ?: emptyArray()).filter { it.isFile && !it.name.endsWith(".part") }
         val ask = JSONObject()
             .put("books", JSONArray(books().map { b ->
@@ -114,16 +126,18 @@ class Storage(context: Context) {
             .put("open", JSONArray(listOfNotNull(open)))
             .put("busy", JSONArray(busy.toList()))
             .put("remove", JSONArray(remove.toList()))
+            .put("ask_first", askFirst)
         val plan = JSONObject(engine.storagePlan(ask.toString()))
         if (plan.has("error")) {
             android.util.Log.w("underscore", "storage plan: ${plan.getString("error")}")
-            return files.sumOf { it.length() }
+            return Trimmed(files.sumOf { it.length() }, emptyList())
         }
         val names = plan.getJSONArray("files")
         for (i in 0 until names.length()) File(cache, names.getString(i)).delete()
         val gone = plan.getJSONArray("books")
         forget((0 until gone.length()).map { gone.getString(it) })
-        return plan.optLong("bytes")
+        val suggest = plan.optJSONArray("suggest")?.let { a -> (0 until a.length()).map { a.getString(it) } } ?: emptyList()
+        return Trimmed(plan.optLong("bytes"), suggest)
     }
 
     /**

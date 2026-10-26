@@ -1261,23 +1261,76 @@ class PlaybackService : Service() {
         keeper.execute { trimNow() }
     }
 
-    /** On the keeper thread. While the open book streams its parts are not listed yet, so only removals run. */
+    /**
+     * The phone holds [bytes], over the [budget], and only removing books
+     * would make room. [suggest] are the books played longest ago that
+     * would, for the listener to choose from.
+     */
+    data class Full(val bytes: Long, val budget: Long, val suggest: List<String>)
+
+    /** Set while the phone is over its limit and waiting for the listener to choose. */
+    @Volatile var storageFull: Full? = null
+        private set
+
+    /**
+     * On the keeper thread. While the open book streams its parts are not
+     * listed yet, so nothing is removed to make room until it is whole.
+     * Unless Settings says to remove old books without asking, books are
+     * only suggested, and the listener chooses.
+     */
     private fun trimNow() {
-        val budget = if (streaming) null else settings.storageBudget
-        cacheBytes = storage.trim(engine, libraryCache, budget, last.getString("key", null), openFiles())
+        if (streaming) return
+        val budget = settings.storageBudget
+        val t = storage.trim(engine, libraryCache, budget, last.getString("key", null), openFiles(), askFirst = !settings.autoRemove)
+        cacheBytes = t.bytes
+        val full = if (budget != null && t.suggest.isNotEmpty()) Full(t.bytes, budget, t.suggest) else null
+        if (full?.suggest != storageFull?.suggest) {
+            storageFull = full
+            mainHandler.post { notifyFull(full) }
+        }
+    }
+
+    /** A notification while the phone is full, so the choice waits even with the app closed. */
+    private fun notifyFull(full: Full?) {
+        val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        if (full == null) {
+            nm.cancel(FULL_NOTIFICATION_ID)
+            return
+        }
+        nm.createNotificationChannel(
+            NotificationChannel(STORAGE_CHANNEL_ID, "Storage", NotificationManager.IMPORTANCE_LOW),
+        )
+        val size = { b: Long -> android.text.format.Formatter.formatShortFileSize(this, b) }
+        nm.notify(
+            FULL_NOTIFICATION_ID,
+            NotificationCompat.Builder(this, STORAGE_CHANNEL_ID)
+                .setSmallIcon(R.drawable.ic_notification)
+                .setContentTitle("Storage is full")
+                .setContentText("${size(full.bytes)} of your ${size(full.budget)} limit. Tap to choose what to remove.")
+                .setContentIntent(openActivity())
+                .setAutoCancel(true)
+                .build(),
+        )
+    }
+
+    /** The listener put off choosing; ask again at the next trim that finds the phone full. */
+    fun putOffFull() {
+        storageFull = null
+        (getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).cancel(FULL_NOTIFICATION_ID)
     }
 
     /**
-     * Remove book [key] from the phone, with the music only it used. Its
-     * map and transcript stay: they are small, and a transcript made on
-     * the phone takes hours to make again. Not the open book. [done] runs
-     * on the main thread.
+     * Remove books [keys] from the phone, with the music only they used.
+     * Their maps and transcripts stay: they are small, and a transcript
+     * made on the phone takes hours to make again. Never the open book.
+     * Then see whether the phone still is over its limit. [done] runs on
+     * the main thread.
      */
-    fun removeBook(key: String, done: () -> Unit) {
+    fun removeBooks(keys: Collection<String>, done: () -> Unit) {
         Thread({
-            if (key != last.getString("key", null)) {
-                cacheBytes = storage.trim(engine, libraryCache, null, last.getString("key", null), openFiles(), listOf(key))
-            }
+            val open = last.getString("key", null)
+            cacheBytes = storage.trim(engine, libraryCache, null, open, openFiles(), keys.filter { it != open }).bytes
+            keepInBudget()
             mainHandler.post(done)
         }, "underscore-storage").start()
     }
@@ -1572,6 +1625,8 @@ class PlaybackService : Service() {
         private const val SYNC_EVERY_MS = 30_000L
         private const val CHANNEL_ID = "playback"
         private const val NOTIFICATION_ID = 1
+        private const val STORAGE_CHANNEL_ID = "storage"
+        private const val FULL_NOTIFICATION_ID = 2
         private const val ACTION_PLAY = "io.github.ronin11.underscore.PLAY"
         private const val ACTION_PAUSE = "io.github.ronin11.underscore.PAUSE"
         private const val ACTION_TOGGLE = "io.github.ronin11.underscore.TOGGLE"

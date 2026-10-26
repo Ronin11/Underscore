@@ -43,6 +43,11 @@ abstract class ServiceActivity : AppCompatActivity() {
         SETTINGS("Settings", R.drawable.ic_tab_settings, SettingsActivity::class.java),
     }
 
+    private companion object {
+        /** The fill already asked about, across screens. */
+        var askedFull: PlaybackService.Full? = null
+    }
+
     /** The tab this screen is, or null for a screen with no tabs, such as Debug. */
     protected open val tab: Tab? = null
 
@@ -65,6 +70,7 @@ abstract class ServiceActivity : AppCompatActivity() {
 
     private val tick = object : Runnable {
         override fun run() {
+            checkFull()
             refresh()
             ui.postDelayed(this, 500)
         }
@@ -179,6 +185,45 @@ abstract class ServiceActivity : AppCompatActivity() {
             }
             addView(item, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         }
+    }
+
+    /**
+     * The phone went over its storage limit and only removing books would
+     * make room: ask which. The books played longest ago that would make
+     * room come checked. Asked once per time it fills, on whichever screen
+     * is in front.
+     */
+    private fun checkFull() {
+        val s = service ?: return
+        val full = s.storageFull ?: return
+        if (full === askedFull) return
+        askedFull = full
+        val sizes = s.storage.sizes(s.libraryCache)
+        val open = s.openKey
+        val books = s.storage.books()
+            .filter { !it.pinned && it.key != open && (sizes[it.key]?.first ?: 0) > 0 }
+            .sortedBy { it.played }
+        if (books.isEmpty()) return
+        val size = { b: Long -> android.text.format.Formatter.formatShortFileSize(this, b) }
+        val labels = books.map { b ->
+            val played = if (b.played > 0) "played ${android.text.format.DateUtils.getRelativeTimeSpanString(b.played)}" else "not played here"
+            "${b.title}\n${size(sizes[b.key]?.first ?: 0)}  ·  $played"
+        }.toTypedArray()
+        val checked = BooleanArray(books.size) { books[it].key in full.suggest }
+        AlertDialog.Builder(this)
+            .setTitle("Storage is full: ${size(full.bytes)} of ${size(full.budget)}")
+            .setMultiChoiceItems(labels, checked) { _, which, on -> checked[which] = on }
+            .setPositiveButton("Remove") { _, _ ->
+                val keys = books.filterIndexed { i, _ -> checked[i] }.map { it.key }
+                if (keys.isEmpty()) s.putOffFull() else s.removeBooks(keys) { refresh() }
+            }
+            .setNeutralButton("Raise the limit") { _, _ ->
+                s.putOffFull()
+                go(Tab.SETTINGS)
+            }
+            .setNegativeButton("Not now") { _, _ -> s.putOffFull() }
+            .setOnCancelListener { s.putOffFull() }
+            .show()
     }
 
     /** A picked file's name, for showing. */

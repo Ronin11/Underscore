@@ -16,6 +16,10 @@
 //!
 //! A book the listener removes goes at once, with the files only it used,
 //! whatever the budget.
+//!
+//! With [`Ask::ask_first`] no book goes to make room. The plan still drops
+//! the files no book uses, and names in [`Plan::suggest`] the books it
+//! would have dropped, so the listener can choose.
 
 use std::collections::HashSet;
 
@@ -56,6 +60,10 @@ pub struct Plan {
     pub files: Vec<String>,
     /// Bytes the cache holds once they are gone.
     pub bytes: u64,
+    /// With [`Ask::ask_first`], the books that would make room, in the
+    /// order they would go. Nothing of theirs is in [`Plan::files`].
+    #[serde(default)]
+    pub suggest: Vec<String>,
 }
 
 /// What the shell asks [`plan`] about.
@@ -75,6 +83,9 @@ pub struct Ask {
     /// Books the listener removed, which go whatever the budget.
     #[serde(default)]
     pub remove: Vec<String>,
+    /// Suggest books to drop rather than dropping them.
+    #[serde(default)]
+    pub ask_first: bool,
 }
 
 /// Decide which books and files to drop. See the module notes for the order.
@@ -129,18 +140,32 @@ pub fn plan(ask: &Ask) -> Plan {
             .filter(|b| !b.pinned && !ask.open.contains(&b.key))
             .collect();
         candidates.sort_by_key(|b| b.played);
+        // What the cache would hold, counting suggested books as gone.
+        let mut left = total;
+        let mut suggested: HashSet<&str> = HashSet::new();
         for book in candidates {
-            if total <= budget {
+            if left <= budget {
                 break;
             }
             kept.retain(|b| b.key != book.key);
-            out.books.push(book.key.clone());
+            if ask.ask_first {
+                out.suggest.push(book.key.clone());
+            } else {
+                out.books.push(book.key.clone());
+            }
             for file in &ask.files {
-                if gone.contains(file.name.as_str()) || busy.contains(file.name.as_str()) {
+                let name = file.name.as_str();
+                if gone.contains(name) || suggested.contains(name) || busy.contains(name) {
                     continue;
                 }
                 if book.files.contains(&file.name) && !listed(&kept, &file.name) {
-                    delete(file, &mut total, &mut gone, &mut out);
+                    if ask.ask_first {
+                        suggested.insert(name);
+                        left = left.saturating_sub(file.bytes);
+                    } else {
+                        delete(file, &mut total, &mut gone, &mut out);
+                        left = total;
+                    }
                 }
             }
         }
@@ -289,6 +314,27 @@ mod tests {
         let p = plan(&ask);
         assert!(!p.files.contains(&"a.m4b".to_string()));
         assert_eq!(p.bytes, 500);
+    }
+
+    #[test]
+    fn asking_first_suggests_books_and_drops_only_unused_files() {
+        let mut all = files();
+        all.push(file("old.flac", 10, 0));
+        let ask = Ask {
+            books: vec![
+                book("a", &["a.m4b", "shared.flac", "only-a.flac"], 1, false),
+                book("b", &["b.m4b", "shared.flac"], 2, false),
+            ],
+            files: all,
+            budget: Some(600),
+            ask_first: true,
+            ..Ask::default()
+        };
+        let p = plan(&ask);
+        assert!(p.books.is_empty());
+        assert_eq!(p.files, vec!["old.flac"]);
+        assert_eq!(p.suggest, vec!["a"]);
+        assert_eq!(p.bytes, 950);
     }
 
     #[test]

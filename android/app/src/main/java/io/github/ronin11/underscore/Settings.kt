@@ -63,6 +63,11 @@ class Settings(context: Context) {
     val storageBudget: Long?
         get() = STORAGE_STEPS_GB[storageStep].takeIf { it >= 0 }?.let { it * 1_000_000_000L }
 
+    /** Over the budget, remove the books played longest ago without asking. */
+    var autoRemove: Boolean
+        get() = prefs.getBoolean(AUTO_REMOVE, false)
+        set(v) = prefs.edit().putBoolean(AUTO_REMOVE, v).apply()
+
     /** Books kept offline, and their map music, download only on Wi-Fi or another unmetered network. */
     var wifiOnly: Boolean
         get() = prefs.getBoolean(WIFI_ONLY, true)
@@ -104,6 +109,7 @@ class Settings(context: Context) {
         val STORAGE_STEPS_GB = longArrayOf(0, 1, 2, 5, 10, 20, 50, -1)
         private const val STORAGE_STEP = "storage_step"
         private const val WIFI_ONLY = "wifi_only"
+        private const val AUTO_REMOVE = "auto_remove"
         private const val SKIP_BACK = "skip_back_sec"
         private const val SKIP_FORWARD = "skip_forward_sec"
         private const val REWIND = "rewind_on_resume"

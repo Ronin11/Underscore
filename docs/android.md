@@ -294,8 +294,15 @@ in the signal does not stop it. That much is always kept. The rest is up
 to Settings, Storage:
 
 - **Keep up to.** A slider from "Only the book I'm on" through 1 to 50
-  GB to "No limit", 5 GB to start. When the cache is over it, files no
-  book uses go first, oldest first, then books played longest ago.
+  GB to "No limit", 5 GB to start, with about how many books of the
+  usual size on the phone fit. When the cache is over it, files no book
+  uses go at once. If that is not enough, the app asks which books to
+  remove, with the ones played longest ago that would make room already
+  checked, on whatever screen is open, and with a notification when the
+  app is closed. "Not now" asks again the next time it fills; "Raise
+  the limit" opens Settings.
+- **Remove old books without asking.** Off by default. On, the books
+  played longest ago go without the question.
 - **Keep offline.** A long press on a book in the book list, or "Keep
   this book offline" in the player's menu, downloads the whole
   book, its map and transcript from beside it on the server, its cover,

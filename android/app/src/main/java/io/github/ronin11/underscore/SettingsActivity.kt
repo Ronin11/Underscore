@@ -30,6 +30,9 @@ class SettingsActivity : ServiceActivity() {
     private lateinit var budget: SeekBar
     private lateinit var budgetValue: TextView
     private lateinit var wifiOnly: SwitchCompat
+    private lateinit var autoRemove: SwitchCompat
+    /** The average book on the phone, in bytes of audio, or 0 before there is one. */
+    @Volatile private var bookBytes = 0L
     /** What the download cache holds, measured off the main thread. */
     @Volatile private var storageSummary: String? = null
 
@@ -45,6 +48,7 @@ class SettingsActivity : ServiceActivity() {
         if (!budget.isPressed) budget.progress = settings.storageStep
         budgetValue.text = budgetLabel(budget.progress)
         if (!wifiOnly.isPressed) wifiOnly.isChecked = settings.wifiOnly
+        if (!autoRemove.isPressed) autoRemove.isChecked = settings.autoRemove
         storage.summary = listOfNotNull(s?.keepBusy, storageSummary ?: "Measuring…").joinToString(". ")
     }
 
@@ -58,7 +62,10 @@ class SettingsActivity : ServiceActivity() {
         Thread({
             val sizes = s.storage.sizes(s.libraryCache)
             val books = s.storage.books().filter { (sizes[it.key]?.first ?: 0) + (sizes[it.key]?.second ?: 0) > 0 }
-            val total = (s.libraryCache.listFiles() ?: emptyArray()).sumOf { it.length() }
+            val cached = (s.libraryCache.listFiles() ?: emptyArray()).associate { it.name to it.length() }
+            val total = cached.values.sum()
+            val audio = s.storage.books().filter { it.complete }.map { b -> b.audio.sumOf { cached[it] ?: 0L } }.filter { it > 0 }
+            bookBytes = if (audio.isEmpty()) 0 else audio.sum() / audio.size
             val kept = books.count { it.pinned }
             val parts = ArrayList<String>()
             parts.add("${if (books.size == 1) "1 book" else "${books.size} books"}, ${size(total)} in all")
@@ -70,11 +77,14 @@ class SettingsActivity : ServiceActivity() {
         }, "underscore-storage").start()
     }
 
-    /** The slider's stop as words. */
+    /** The slider's stop as words, with about how many books of the usual size fit. */
     private fun budgetLabel(step: Int): String = when (val gb = Settings.STORAGE_STEPS_GB[step]) {
         0L -> "Only the book I'm on"
         -1L -> "No limit"
-        else -> "$gb GB"
+        else -> {
+            val avg = bookBytes
+            if (avg > 0) "$gb GB\nabout ${gb * 1_000_000_000L / avg} books" else "$gb GB"
+        }
     }
 
     /**
@@ -152,7 +162,7 @@ class SettingsActivity : ServiceActivity() {
         if (!open) {
             actions.add("Remove from this phone" to {
                 confirm("Remove ${b.title}?", "Music another book uses stays. Its map and transcript stay too. It downloads again the next time it is opened.") {
-                    s.removeBook(b.key) { measure() }
+                    s.removeBooks(listOf(b.key)) { measure() }
                 }
             })
         }
@@ -273,7 +283,7 @@ class SettingsActivity : ServiceActivity() {
         list.addView(
             row(
                 "Keep up to",
-                "Books played longest ago go first when there is no room, with the music only they use. Books kept offline and the open book stay.",
+                "When the phone is full it asks which books to remove, the ones played longest ago first. Music another book uses stays, and so do books kept offline and the open book.",
                 null,
             ).view,
         )
@@ -301,6 +311,15 @@ class SettingsActivity : ServiceActivity() {
                 addView(budgetValue, LinearLayout.LayoutParams(dp(140), ViewGroup.LayoutParams.WRAP_CONTENT))
             },
         )
+        val (autoRow, autoSwitch) = switchRow(
+            "Remove old books without asking",
+            "When full, remove the books played longest ago instead of asking.",
+        ) {
+            settings.autoRemove = it
+            service?.keepInBudget()
+        }
+        autoRemove = autoSwitch
+        list.addView(autoRow)
         val (wifiRow, wifiSwitch) = switchRow(
             "Download on Wi-Fi only",
             "For books kept offline and their music. The book you are playing still streams on mobile data.",
