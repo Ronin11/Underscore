@@ -25,8 +25,8 @@ use std::time::Duration;
 use underscore_core::{Chain, LayerId, Player, PlayerConfig, RewindPolicy, SleepTimer, Source};
 use underscore_decode::{Chapter, FileSource, MediaSource, probe, probe_path};
 use underscore_library::{
-    Audiobookshelf, Cache, Credentials, Download, ItemId, LocalLibrary, OpenIdStart, Opened, Role,
-    StreamReader, Subsonic, SubsonicLogin,
+    Audiobookshelf, Cache, Credentials, Download, ItemId, Library, LocalLibrary, OpenIdStart,
+    Opened, Role, StreamReader, Subsonic, SubsonicLogin, conductor,
 };
 use underscore_map::Map;
 
@@ -42,6 +42,16 @@ const CLEAR_FADE: Duration = Duration::from_secs(2);
 pub mod follow;
 pub mod jni;
 pub mod transcript;
+
+/// The cache files a map's music lives in. See [`Bridge::map_files`].
+#[derive(Debug, Default)]
+pub struct MapFiles {
+    pub files: Vec<std::path::PathBuf>,
+    /// Tracks that would not download.
+    pub failed: usize,
+    /// Why the last of them failed.
+    pub error: Option<String>,
+}
 
 /// A player wired the way the app needs it.
 pub struct Bridge {
@@ -620,6 +630,38 @@ impl Bridge {
         }
         let cache = Cache::open(cache_dir).map_err(|e| format!("cache: {e}"))?;
         Ok(MapPlayback::new(map, server, cache))
+    }
+
+    /// The cache files a map's music lives in, for the list of what a book
+    /// uses, so removing the book can tell its music from music another
+    /// book shares. With `fetch`, each track is downloaded first, so the
+    /// map plays offline; a failed track is counted and skipped. Slow: it
+    /// searches the music server's song list, loading it first if needed,
+    /// and with `fetch` downloads. Never call it under the bridge lock.
+    /// A music folder on the phone uses no cache files, so it has none.
+    ///
+    /// # Errors
+    /// The map does not parse, or the server could not be searched.
+    pub fn map_files(
+        toml: &str,
+        music: &dyn Library,
+        cache_dir: &Path,
+        fetch: bool,
+    ) -> Result<MapFiles, String> {
+        let map = Map::parse(toml).map_err(|e| e.to_string())?;
+        let cache = Cache::open(cache_dir).map_err(|e| format!("cache: {e}"))?;
+        let items = conductor::items(&map, music).map_err(|e| e.to_string())?;
+        let mut out = MapFiles::default();
+        for id in &items {
+            if fetch && let Err(e) = music.fetch(id, &cache) {
+                out.failed += 1;
+                out.error = Some(e.to_string());
+            }
+            if let Some(path) = music.cache_path(id, &cache) {
+                out.files.push(path);
+            }
+        }
+        Ok(out)
     }
 
     /// Follow a prepared map. Fits it to the loaded book, if there is one;

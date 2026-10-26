@@ -26,9 +26,11 @@ crates/map       Music maps: the TOML format, validation, and the schedule that
 crates/library   The Library trait (list, search, fetch, progress), LocalLibrary
                  over folders, Audiobookshelf over HTTP (abs.rs), a
                  Subsonic-compatible music server such as Navidrome
-                 (subsonic.rs), the per-stream Cache, and the Conductor
+                 (subsonic.rs), the per-stream Cache, the Conductor
                  that turns a map plus the book position into player
-                 directions.
+                 directions, and keep.rs, which decides which downloads
+                 go when space runs short without taking music another
+                 book shares.
 crates/transcribe  Speech to text on the device with whisper.cpp (whisper-rs):
                  model download, 16 kHz mono in, timed segments out.
 crates/android   Bridge (plain Rust over Player), follow.rs (the map worker
@@ -44,8 +46,10 @@ android/         Gradle project. Engine.kt (JNI wrapper), PlaybackService.kt
                  books), SettingsActivity.kt,
                  DebugActivity.kt, BugReport.kt, Sleep.kt (the sources that
                  notice the listener fell asleep), SleepSetup.kt (their
-                 setup and test screens). UI built in code, no layout
-                 XML; icons are vector drawables under res/drawable.
+                 setup and test screens), Shake.kt, Storage.kt (each
+                 book's files and map, for keeping books offline). UI
+                 built in code, no layout XML; icons are vector
+                 drawables under res/drawable.
 android/wear/    The Wear OS app: Health Services says the wearer is asleep,
                  and it tells the phone app over the Wearable Data Layer.
                  Same application id and signing key as the phone app.

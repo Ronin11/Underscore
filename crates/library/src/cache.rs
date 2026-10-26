@@ -9,8 +9,12 @@
 use std::fs::{self, File};
 use std::io;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::ItemId;
+
+/// Counts fills, to name each one's temporary file.
+static FILLS: AtomicU64 = AtomicU64::new(0);
 
 /// A cache directory.
 #[derive(Debug, Clone)]
@@ -72,8 +76,12 @@ impl Cache {
         if path.is_file() {
             return Ok(path);
         }
+        // A name of its own, so two threads filling the same item do not
+        // write into one file. The second rename replaces a whole file
+        // with another whole copy.
+        let n = FILLS.fetch_add(1, Ordering::Relaxed);
         let tmp = path.with_extension(format!(
-            "{}.part",
+            "{}.{n}.part",
             path.extension().and_then(|e| e.to_str()).unwrap_or("")
         ));
         let result = File::create(&tmp).and_then(|mut f| {

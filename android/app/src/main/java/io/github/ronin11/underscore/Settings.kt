@@ -51,6 +51,23 @@ class Settings(context: Context) {
         get() = prefs.getBoolean(SLEEP_SHAKE, true)
         set(v) = prefs.edit().putBoolean(SLEEP_SHAKE, v).apply()
 
+    /**
+     * How much the download cache may hold, as a step of [STORAGE_STEPS_GB]:
+     * 0 keeps only the open book and books kept offline, the last is no limit.
+     */
+    var storageStep: Int
+        get() = prefs.getInt(STORAGE_STEP, STORAGE_STEPS_GB.indexOf(5)).coerceIn(0, STORAGE_STEPS_GB.lastIndex)
+        set(v) = prefs.edit().putInt(STORAGE_STEP, v.coerceIn(0, STORAGE_STEPS_GB.lastIndex)).apply()
+
+    /** The cache's budget in bytes, or null for no limit. */
+    val storageBudget: Long?
+        get() = STORAGE_STEPS_GB[storageStep].takeIf { it >= 0 }?.let { it * 1_000_000_000L }
+
+    /** Books kept offline, and their map music, download only on Wi-Fi or another unmetered network. */
+    var wifiOnly: Boolean
+        get() = prefs.getBoolean(WIFI_ONLY, true)
+        set(v) = prefs.edit().putBoolean(WIFI_ONLY, v).apply()
+
     /** Whether the sleep source with this key has been set up and tested. */
     fun sleepSetUp(key: String): Boolean = prefs.getBoolean(SLEEP_SET_UP_PREFIX + key, false)
 
@@ -82,16 +99,20 @@ class Settings(context: Context) {
         prefs.unregisterOnSharedPreferenceChangeListener(l)
     }
 
-    private companion object {
-        const val SKIP_BACK = "skip_back_sec"
-        const val SKIP_FORWARD = "skip_forward_sec"
-        const val REWIND = "rewind_on_resume"
-        const val MUSIC_LEVEL = "music_level"
-        const val KEEP_SCREEN_ON = "keep_screen_on"
-        const val MUSIC_DIR = "music_dir"
-        const val SLEEP_PREFIX = "sleep_from_"
-        const val SLEEP_SET_UP_PREFIX = "sleep_set_up_"
-        const val SLEEP_AUTO = "sleep_auto"
-        const val SLEEP_SHAKE = "sleep_shake"
+    companion object {
+        /** The storage slider's stops, in gigabytes; -1 is no limit. */
+        val STORAGE_STEPS_GB = longArrayOf(0, 1, 2, 5, 10, 20, 50, -1)
+        private const val STORAGE_STEP = "storage_step"
+        private const val WIFI_ONLY = "wifi_only"
+        private const val SKIP_BACK = "skip_back_sec"
+        private const val SKIP_FORWARD = "skip_forward_sec"
+        private const val REWIND = "rewind_on_resume"
+        private const val MUSIC_LEVEL = "music_level"
+        private const val KEEP_SCREEN_ON = "keep_screen_on"
+        private const val MUSIC_DIR = "music_dir"
+        private const val SLEEP_PREFIX = "sleep_from_"
+        private const val SLEEP_SET_UP_PREFIX = "sleep_set_up_"
+        private const val SLEEP_AUTO = "sleep_auto"
+        private const val SLEEP_SHAKE = "sleep_shake"
     }
 }

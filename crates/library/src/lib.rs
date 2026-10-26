@@ -20,6 +20,7 @@
 pub mod abs;
 pub mod cache;
 pub mod conductor;
+pub mod keep;
 pub mod local;
 pub mod stream;
 pub mod subsonic;
@@ -356,6 +357,14 @@ pub trait Library: Send + Sync {
     /// # Errors
     /// [`Error::NotFound`], or the fetch failed.
     fn fetch(&self, id: &ItemId, cache: &Cache) -> Result<PathBuf, Error>;
+
+    /// Where [`Library::fetch`] puts the item in `cache`, there yet or not,
+    /// without fetching it. `None` for a library whose files are already
+    /// local, which never uses the cache, or when the item is unknown.
+    fn cache_path(&self, id: &ItemId, cache: &Cache) -> Option<PathBuf> {
+        let _ = (id, cache);
+        None
+    }
 
     /// How far through an item the listener is, if the library knows.
     ///

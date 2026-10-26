@@ -153,15 +153,17 @@ the server" line says what the app found.
 
 ## Coming back
 
-The app remembers the last book, where the listener was in it, and the
-last map. When it starts again, after the system closed it or the phone
+The app remembers the last book, where the listener was in it, and each
+book's map. When it starts again, after the system closed it or the phone
 restarted, it signs back in to both servers, opens that book at that
 place, and follows that map again. A server book opens from the cache,
 at the position the server has, which may be newer if another app
 played it since. Without the server it opens the cached file as it is,
 at the position this app saved. A book from a file opens again through
-the read grant the picker gave, which the app keeps. The map's text is
-kept in the app's private files. Clearing the map forgets it.
+the read grant the picker gave, which the app keeps. Each book's map is
+kept in the app's private files, under `files/maps`, so opening a book
+again brings its map back, offline too. Clearing the map forgets it for
+that book.
 
 ## Transcribing on the phone
 
@@ -277,12 +279,39 @@ permission. Then on the phone: Sleep, Auto…, Add…, Watch.
 
 Server books and map music are cached under the app's cache folder,
 `cache/library`, one file per item exactly as the server sent it. Covers
-are under `cache/covers`. Nothing removes them on its own, though
-Android may clear the cache folder when the phone runs short of space.
-Settings, Storage, Downloads shows what they take and removes one book,
-the map music, the covers, or all of it. The open book is kept, because
-it is playing from its file. Anything removed downloads again when it is
-next needed.
+are under `cache/covers`. Android may clear the cache folder when the
+phone runs short of space.
+
+The book you open comes down whole in the background while it plays, so
+seeking is quick, the map and the transcriber can read ahead, and a gap
+in the signal does not stop it. That much is always kept. The rest is up
+to Settings, Storage:
+
+- **Keep up to.** A slider from "Only the book I'm on" through 1 to 50
+  GB to "No limit", 5 GB to start. When the cache is over it, files no
+  book uses go first, oldest first, then books played longest ago.
+- **Keep offline.** A long press on a book in the book list, or "Keep
+  this book offline" under Library on the player, downloads the whole
+  book, its map and transcript from beside it on the server, its cover,
+  and every track its map plays. A book kept offline is never removed
+  to make room. When the server is out of reach the book list shows
+  the books on the phone, and they open from their files at the place
+  this app last saw.
+- **Download on Wi-Fi only.** On by default. It holds back downloads for
+  books kept offline and their music until the phone is on Wi-Fi or
+  another unmetered network. The book you are playing still streams.
+- **On this phone.** Each book with what it takes on its own and what it
+  shares with other books. Tap one to keep it offline or remove it.
+
+Music is often shared between books, so the app keeps a list of the
+files each book uses, in `files/storage.json`: the book's own audio, and
+the cached tracks its map plays. A book goes with only the files no
+other book still lists. The open book and books kept offline stay, and
+so do their files. Which books and files go is decided by `plan` in
+`crates/library/src/keep.rs`, which is pure and tested; the app keeps
+the list and does the deleting. A book's map and transcript stay when
+the book goes: they are small, and a transcript made on the phone takes
+hours to make again.
 
 ## Lock screen, headset, and other apps
 

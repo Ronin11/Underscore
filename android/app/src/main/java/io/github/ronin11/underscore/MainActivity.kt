@@ -53,6 +53,7 @@ class MainActivity : ServiceActivity() {
     private lateinit var musicLine: TextView
     private lateinit var speedTile: Tile
     private lateinit var sleepTile: Tile
+    private var keepItem: android.view.MenuItem? = null
     private lateinit var chaptersTile: Tile
     private lateinit var musicTile: Tile
     private var scrubbing = false
@@ -80,6 +81,13 @@ class MainActivity : ServiceActivity() {
         library.add("Open a file…").setOnMenuItemClickListener { pickSpeech.launch(AUDIO_TYPES); true }
         library.add("Server books…").setOnMenuItemClickListener { serverBooks(); true }
         library.add("Audiobookshelf server…").setOnMenuItemClickListener { serverDialog(); true }
+        keepItem = library.add("Keep this book offline").apply {
+            isCheckable = true
+            setOnMenuItemClickListener {
+                service?.let { s -> s.keepOpenBookOffline(!s.openBookKept) }
+                true
+            }
+        }
         menu.add("Settings").setOnMenuItemClickListener {
             startActivity(Intent(this, SettingsActivity::class.java)); true
         }
@@ -87,6 +95,13 @@ class MainActivity : ServiceActivity() {
             startActivity(Intent(this, DebugActivity::class.java)); true
         }
         return true
+    }
+
+    override fun onPrepareOptionsMenu(menu: Menu): Boolean {
+        val s = service
+        keepItem?.isVisible = s?.bookFromServer == true
+        keepItem?.isChecked = s?.openBookKept == true
+        return super.onPrepareOptionsMenu(menu)
     }
 
     private fun loadBook(uri: Uri) {

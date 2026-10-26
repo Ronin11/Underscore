@@ -120,6 +120,13 @@ class Engine(sampleRate: Int, val channels: Int) : AutoCloseable {
     /** Take [data] as book [key]'s transcript under [dir]. Null, or why not. */
     fun transcribeImport(dir: String, key: String, data: ByteArray): String? = nativeTranscribeImport(h(), dir, key, data)
 
+    /** Which downloads to drop: JSON in and out, as `keep.rs` describes. Pure and quick. */
+    fun storagePlan(ask: String): String = nativeStoragePlan(h(), ask)
+    /** Download all of server book [id] into [cacheDir]: `{"files": [...]}` or `{"error": ...}`. Slow. */
+    fun serverDownloadBook(id: String, cacheDir: String): String = nativeServerDownloadBook(h(), id, cacheDir)
+    /** The cache files map [toml]'s music lives in, downloading them first with [fetch]. Slow. */
+    fun mapFiles(toml: String, cacheDir: String, fetch: Boolean): String = nativeMapFiles(h(), toml, cacheDir, fetch)
+
     /**
      * The music server (Navidrome or any Subsonic-compatible one). All of
      * these talk to the server, so call them from a background thread.
@@ -204,6 +211,9 @@ class Engine(sampleRate: Int, val channels: Int) : AutoCloseable {
     private external fun nativeServerSync(handle: Long): Boolean
     private external fun nativeServerCompanion(handle: Long, id: String, name: String): ByteArray?
     private external fun nativeTranscribeImport(handle: Long, dir: String, key: String, data: ByteArray): String?
+    private external fun nativeStoragePlan(handle: Long, ask: String): String
+    private external fun nativeServerDownloadBook(handle: Long, id: String, cacheDir: String): String
+    private external fun nativeMapFiles(handle: Long, toml: String, cacheDir: String, fetch: Boolean): String
     private external fun nativeRender(handle: Long, out: FloatArray, nowMs: Long): Int
 
     companion object {

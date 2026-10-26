@@ -37,6 +37,9 @@ class SettingsActivity : ServiceActivity() {
     private lateinit var server: Row
     private lateinit var musicServer: Row
     private lateinit var storage: Row
+    private lateinit var budget: SeekBar
+    private lateinit var budgetValue: TextView
+    private lateinit var wifiOnly: SwitchCompat
     /** What the download cache holds, measured off the main thread. */
     @Volatile private var storageSummary: String? = null
 
@@ -71,7 +74,10 @@ class SettingsActivity : ServiceActivity() {
             s.serverUrl != null -> "${s.serverUrl}, not signed in"
             else -> "Not signed in"
         }
-        storage.summary = storageSummary ?: "Measuring…"
+        if (!budget.isPressed) budget.progress = settings.storageStep
+        budgetValue.text = budgetLabel(budget.progress)
+        if (!wifiOnly.isPressed) wifiOnly.isChecked = settings.wifiOnly
+        storage.summary = listOfNotNull(s?.keepBusy, storageSummary ?: "Measuring…").joinToString(". ")
     }
 
     override fun onServiceReady() = measure()
@@ -82,85 +88,119 @@ class SettingsActivity : ServiceActivity() {
     private fun measure() {
         val s = service ?: return
         Thread({
-            val files = s.downloads()
-            val books = files.filter { it.title != null }
-            val other = files.filter { it.title == null }
-            val covers = s.coverBytes()
+            val sizes = s.storage.sizes(s.libraryCache)
+            val books = s.storage.books().filter { (sizes[it.key]?.first ?: 0) + (sizes[it.key]?.second ?: 0) > 0 }
+            val total = (s.libraryCache.listFiles() ?: emptyArray()).sumOf { it.length() }
+            val kept = books.count { it.pinned }
             val parts = ArrayList<String>()
-            val count = books.map { it.title }.distinct().size
-            parts.add("${if (count == 1) "1 book" else "$count books"}, ${size(books.sumOf { it.bytes })}")
-            if (other.isNotEmpty()) parts.add("music and other files ${size(other.sumOf { it.bytes })}")
+            parts.add("${if (books.size == 1) "1 book" else "${books.size} books"}, ${size(total)} in all")
+            if (kept > 0) parts.add("$kept kept offline")
+            val covers = s.coverBytes()
             if (covers > 0) parts.add("covers ${size(covers)}")
-            storageSummary = "${parts.joinToString(", ")}. Tap to remove some."
+            storageSummary = "${parts.joinToString(", ")}. Tap to see or remove them."
             ui.post { refresh() }
         }, "underscore-storage").start()
     }
 
+    /** The slider's stop as words. */
+    private fun budgetLabel(step: Int): String = when (val gb = Settings.STORAGE_STEPS_GB[step]) {
+        0L -> "Only the book I'm on"
+        -1L -> "No limit"
+        else -> "$gb GB"
+    }
+
     /**
-     * The downloads, biggest first, each removable on its own, and a way
-     * to remove them all. The open book stays: it plays from its file.
+     * The books on the phone, biggest first. Each says what it takes on
+     * its own and what it shares with other books, which stays when it
+     * goes. Tap one to keep it offline or remove it.
      */
     private fun storageDialog() {
         val s = service ?: return
         Thread({
-            val files = s.downloads()
+            val sizes = s.storage.sizes(s.libraryCache)
+            val unlisted = s.storage.unlisted(s.libraryCache)
             val covers = s.coverBytes()
-            ui.post { showStorage(s, files, covers) }
+            ui.post { showStorage(s, sizes, unlisted, covers) }
         }, "underscore-storage").start()
     }
 
-    private fun showStorage(s: PlaybackService, files: List<PlaybackService.Download>, covers: Long) {
-        class Entry(val label: String, val files: List<PlaybackService.Download>, val covers: Boolean = false)
-        val entries = ArrayList<Entry>()
-        // A book split across files is one entry.
-        val books = files.filter { it.title != null }.groupBy { it.title }.values
-        for (parts in books.sortedByDescending { p -> p.sumOf { it.bytes } }) {
-            val open = parts.any { it.open }
-            val label = "${parts[0].title}\n${size(parts.sumOf { it.bytes })}" +
-                (if (parts.size > 1) "  ·  ${parts.size} files" else "") +
-                (if (open) "  ·  open now" else "")
-            entries.add(Entry(label, parts))
-        }
-        val other = files.filter { it.title == null }
-        if (other.isNotEmpty()) {
-            entries.add(
-                Entry(
-                    "Map music and other files\n${other.size} files, ${size(other.sumOf { it.bytes })}. Includes books downloaded before this version.",
-                    other,
-                ),
+    private fun showStorage(s: PlaybackService, sizes: Map<String, Pair<Long, Long>>, unlisted: List<java.io.File>, covers: Long) {
+        val open = s.openKey
+        val books = s.storage.books()
+            .filter { (sizes[it.key]?.first ?: 0) + (sizes[it.key]?.second ?: 0) > 0 || it.pinned }
+            .sortedByDescending { sizes[it.key]?.first ?: 0 }
+        val labels = ArrayList<String>()
+        for (b in books) {
+            val (own, shared) = sizes[b.key] ?: (0L to 0L)
+            val notes = listOfNotNull(
+                size(own),
+                if (shared > 0) "+${size(shared)} shared with other books" else null,
+                if (b.pinned) (if (b.complete) "kept offline" else "kept offline, downloading") else null,
+                if (b.key == open) "open now" else null,
             )
+            labels.add("${b.title}\n${notes.joinToString("  ·  ")}")
         }
-        if (covers > 0) entries.add(Entry("Book covers\n${size(covers)}", emptyList(), covers = true))
-        if (entries.isEmpty()) {
+        if (unlisted.isNotEmpty()) labels.add("Files no book uses\n${unlisted.size} files, ${size(unlisted.sumOf { it.length() })}")
+        if (covers > 0) labels.add("Book covers\n${size(covers)}")
+        if (labels.isEmpty()) {
             toast("Nothing is downloaded")
             return
         }
-        fun remove(what: String, entry: List<PlaybackService.Download>, alsoCovers: Boolean) {
-            AlertDialog.Builder(this)
-                .setTitle("Remove $what?")
-                .setMessage("It downloads again the next time it is needed.")
-                .setPositiveButton("Remove") { _, _ ->
-                    Thread({
-                        s.removeDownloads(entry.map { it.file }, alsoCovers)
-                        ui.post { measure() }
-                    }, "underscore-storage").start()
-                }
-                .setNegativeButton("Cancel", null)
-                .show()
-        }
         AlertDialog.Builder(this)
-            .setTitle("Downloads")
-            .setItems(entries.map { it.label }.toTypedArray()) { _, which ->
-                val e = entries[which]
+            .setTitle("On this phone")
+            .setItems(labels.toTypedArray()) { _, which ->
                 when {
-                    e.files.isNotEmpty() && e.files[0].title != null && e.files.any { it.open } ->
-                        toast("That book is open. Open another book first.")
-                    e.covers -> remove("the book covers", emptyList(), true)
-                    else -> remove(e.files.firstOrNull()?.title ?: "the map music and other files", e.files, false)
+                    which < books.size -> bookDialog(s, books[which], books[which].key == open)
+                    which == books.size && unlisted.isNotEmpty() -> confirm("Remove the files no book uses?") {
+                        s.removeUnlisted { measure() }
+                    }
+                    else -> confirm("Remove the book covers?") {
+                        Thread({ s.removeCovers(); ui.post { measure() } }, "underscore-storage").start()
+                    }
                 }
             }
-            .setNeutralButton("Remove all") { _, _ -> remove("all downloads except the open book", files, true) }
             .setNegativeButton("Close", null)
+            .show()
+    }
+
+    /** Keep one book offline, or remove it from the phone. */
+    private fun bookDialog(s: PlaybackService, b: Storage.Book, open: Boolean) {
+        val actions = ArrayList<Pair<String, () -> Unit>>()
+        val id = b.serverId
+        if (id != null) {
+            actions.add(
+                (if (b.pinned) "Stop keeping offline" else "Keep offline, with its map's music") to {
+                    s.keepOffline(
+                        PlaybackService.ServerBook(
+                            id, b.title, b.author, b.series, b.durationMs, 0, b.audio.size, b.coverUrl,
+                            -1.0, false, b.played, open,
+                        ),
+                        !b.pinned,
+                    )
+                    measure()
+                },
+            )
+        }
+        if (!open) {
+            actions.add("Remove from this phone" to {
+                confirm("Remove ${b.title}?", "Music another book uses stays. Its map and transcript stay too. It downloads again the next time it is opened.") {
+                    s.removeBook(b.key) { measure() }
+                }
+            })
+        }
+        AlertDialog.Builder(this)
+            .setTitle(b.title)
+            .setItems(actions.map { it.first }.toTypedArray()) { _, which -> actions[which].second() }
+            .setNegativeButton("Close", null)
+            .show()
+    }
+
+    private fun confirm(title: String, message: String? = null, onYes: () -> Unit) {
+        AlertDialog.Builder(this)
+            .setTitle(title)
+            .apply { message?.let { setMessage(it) } }
+            .setPositiveButton("Remove") { _, _ -> onYes() }
+            .setNegativeButton("Cancel", null)
             .show()
     }
 
@@ -306,7 +346,47 @@ class SettingsActivity : ServiceActivity() {
 
         list.addView(divider())
         list.addView(heading("Storage"))
-        storage = row("Downloads", null) { storageDialog() }
+        list.addView(
+            row(
+                "Keep up to",
+                "Books played longest ago go first when there is no room, with the music only they use. Books kept offline and the open book stay.",
+                null,
+            ).view,
+        )
+        budgetValue = label(14f, android.view.Gravity.END)
+        budget = SeekBar(this).apply {
+            max = Settings.STORAGE_STEPS_GB.lastIndex
+            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(sb: SeekBar, p: Int, fromUser: Boolean) {
+                    budgetValue.text = budgetLabel(p)
+                }
+                override fun onStartTrackingTouch(sb: SeekBar) {}
+                override fun onStopTrackingTouch(sb: SeekBar) {
+                    settings.storageStep = sb.progress
+                    service?.keepInBudget()
+                    ui.postDelayed({ measure() }, 500)
+                }
+            })
+        }
+        list.addView(
+            LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = android.view.Gravity.CENTER_VERTICAL
+                setPadding(dp(16), 0, dp(16), dp(8))
+                addView(budget, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+                addView(budgetValue, LinearLayout.LayoutParams(dp(140), ViewGroup.LayoutParams.WRAP_CONTENT))
+            },
+        )
+        val (wifiRow, wifiSwitch) = switchRow(
+            "Download on Wi-Fi only",
+            "For books kept offline and their music. The book you are playing still streams on mobile data.",
+        ) {
+            settings.wifiOnly = it
+            service?.fetchKept()
+        }
+        wifiOnly = wifiSwitch
+        list.addView(wifiRow)
+        storage = row("On this phone", null) { storageDialog() }
         list.addView(storage.view)
 
         list.addView(divider())

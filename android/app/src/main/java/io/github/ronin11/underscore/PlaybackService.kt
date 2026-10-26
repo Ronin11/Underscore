@@ -15,6 +15,9 @@ import android.media.AudioFocusRequest
 import android.media.AudioFormat
 import android.media.AudioManager
 import android.media.AudioTrack
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
 import android.net.Uri
 import android.os.Binder
 import android.os.Build
@@ -112,9 +115,27 @@ class PlaybackService : Service() {
     private val musicPrefs by lazy { getSharedPreferences("music_server", Context.MODE_PRIVATE) }
     /** The last book and map, and where the listener was, for the next start. */
     private val last by lazy { getSharedPreferences("last", Context.MODE_PRIVATE) }
-    /** Which cached file is which server book, by file name, for the storage screen. */
+    /** Before [storage]: which cached file was which book, by title. Read once, to carry over. */
     private val downloadNames by lazy { getSharedPreferences("downloads", Context.MODE_PRIVATE) }
+    /** Before maps were kept by book: the last book's map. Read once, to carry over. */
     private val lastMapFile by lazy { File(filesDir, "last-map.toml") }
+    /** Which files each book on the phone uses, and each book's map. */
+    val storage by lazy { Storage(this) }
+    /** Downloads for books kept offline, and making room, one at a time. */
+    private val keeper = java.util.concurrent.Executors.newSingleThreadExecutor { Thread(it, "underscore-keep") }
+    private val keepQueued = java.util.concurrent.atomic.AtomicBoolean(false)
+    /** What keeping books offline is doing now, for the UI; null when idle. */
+    @Volatile var keepBusy: String? = null
+        private set
+    /** Bytes in the download cache after the last trim, or -1 before one. */
+    @Volatile var cacheBytes = -1L
+        private set
+    /** Wi-Fi coming back starts downloads that were waiting for it. */
+    private val network = object : ConnectivityManager.NetworkCallback() {
+        override fun onCapabilitiesChanged(n: Network, caps: NetworkCapabilities) {
+            if (keepBusy?.startsWith("Waiting") == true && downloadAllowed()) fetchKept()
+        }
+    }
     /** Transcribing on the phone: on or off, and which model. */
     private val transcribePrefs by lazy { getSharedPreferences("transcribe", Context.MODE_PRIVATE) }
     val transcribing: Boolean get() = transcribePrefs.getBoolean("on", false)
@@ -239,6 +260,7 @@ class PlaybackService : Service() {
         // the system's media controls have something to show from the start.
         publishState()
         mainHandler.post(stateTick)
+        runCatching { getSystemService(ConnectivityManager::class.java).registerDefaultNetworkCallback(network) }
         restore()
     }
 
@@ -266,6 +288,8 @@ class PlaybackService : Service() {
         savePosition()
         mainHandler.removeCallbacks(stateTick)
         settingsListener?.let { settings.unlisten(it) }
+        runCatching { getSystemService(ConnectivityManager::class.java).unregisterNetworkCallback(network) }
+        keeper.shutdown()
         unregisterReceiver(noisyReceiver)
         abandonFocus()
         session.isActive = false
@@ -385,6 +409,7 @@ class PlaybackService : Service() {
             rememberBook("file:$uri") {
                 putString("kind", "file").putString("uri", uri.toString()).putString("name", name)
             }
+            notePlayed("file:$uri", name ?: "book")
             showFileDetails(uri)
             followWithTranscriber()
         }
@@ -425,6 +450,8 @@ class PlaybackService : Service() {
             return
         }
         val cache = File(cacheDir, "library")
+        // The map is for the book open now, even if another opens while it loads.
+        val key = last.getString("key", null)
         mapLoading = true
         Thread({
             // The music server wins when both are set.
@@ -435,19 +462,29 @@ class PlaybackService : Service() {
             }
             if (problem == null) {
                 mapName = name
-                runCatching { lastMapFile.writeText(toml) }
-                last.edit().putString("map", name ?: "map").apply()
+                if (key != null) {
+                    storage.saveMap(key, toml, name ?: "map")
+                    noteMapMusic(key, toml)
+                }
             }
             mapLoading = false
             mainHandler.post { onDone(problem) }
         }, "underscore-map-load").start()
     }
 
+    /** Stop following the map, and forget it for this book. */
     fun clearMap() {
+        dropMap()
+        last.getString("key", null)?.let { key ->
+            storage.forgetMap(key)
+            if (storage.book(key) != null) storage.update(key, key) { it.copy(music = emptySet()) }
+        }
+    }
+
+    /** Stop following the map. The book keeps it for next time. */
+    private fun dropMap() {
         engine.clearMap()
         mapName = null
-        last.edit().remove("map").apply()
-        lastMapFile.delete()
     }
 
     // The music server. Same shape as Audiobookshelf below, but what is
@@ -585,6 +622,8 @@ class PlaybackService : Service() {
      */
     private fun restore() {
         Thread({
+            carryOverDownloads()
+            last.getString("key", null)?.let { carryOverMap(it) }
             resumeServer()
             resumeMusicServer()
             val kind = last.getString("kind", null)
@@ -603,6 +642,7 @@ class PlaybackService : Service() {
                 }
             }
             mainHandler.post { restoreMap() }
+            fetchKept()
         }, "underscore-restore").start()
     }
 
@@ -614,6 +654,7 @@ class PlaybackService : Service() {
         var ok = engine.hasServer && engine.serverOpen(id, libraryCache.absolutePath) == null
         // The server had no position for it: use ours.
         if (ok && at > 0 && engine.positionMs < 1000) engine.seekMs(at)
+        if (!ok) ok = reopenKept("abs:$id")
         if (!ok && file != null && file.lines().all { File(it).isFile }) {
             ok = engine.serverReopen(id, file)
             if (ok && at > 0) engine.seekMs(at)
@@ -630,19 +671,42 @@ class PlaybackService : Service() {
                 publishState()
                 // A book whose download was cut short streams again.
                 downloading = engine.serverDownload != null && engine.serverBookFile == null
-                if (!downloading) followWithTranscriber()
+                notePlayed("abs:$id", name ?: id)
+                if (!downloading) {
+                    engine.serverBookFile?.let { noteAudio(it) }
+                    followWithTranscriber()
+                }
                 fetchCompanions(id)
             }
         }
     }
 
+    /** Follow the open book's own map, if it has one and none is loaded. */
     private fun restoreMap() {
-        val name = last.getString("map", null) ?: return
         if (mapName != null || mapLoading) return
-        val text = runCatching { lastMapFile.readText() }.getOrNull() ?: return
+        val key = last.getString("key", null) ?: return
+        val (text, name) = storage.map(key) ?: return
         loadMap(text, name) { problem ->
             if (problem != null) toast("Could not reload the map $name: $problem")
         }
+    }
+
+    /** Before maps were kept by book, the last book's map was the only one. */
+    private fun carryOverMap(key: String) {
+        val text = runCatching { lastMapFile.readText() }.getOrNull() ?: return
+        if (storage.map(key) == null) storage.saveMap(key, text, last.getString("map", null) ?: "map")
+        lastMapFile.delete()
+        last.edit().remove("map").apply()
+    }
+
+    /** Before books kept lists of their files, a file only had a title. On the restore thread. */
+    private fun carryOverDownloads() {
+        val named = downloadNames.all.mapNotNull { (file, title) -> (title as? String)?.let { file to it } }
+        if (named.isEmpty()) return
+        for ((title, files) in named.groupBy({ it.second }, { it.first })) {
+            storage.update("legacy:$title", title) { it.copy(audio = files.sorted(), complete = true) }
+        }
+        downloadNames.edit().clear().apply()
     }
 
     /**
@@ -683,6 +747,7 @@ class PlaybackService : Service() {
                 if (last.getString("id", null) != id) return@post
                 if (transcript != null && problem == null) {
                     last.edit().putBoolean("serverTranscript", true).apply()
+                    if (storage.book("abs:$id") != null) storage.update("abs:$id", id) { it.copy(serverTranscript = true) }
                     followWithTranscriber()
                 } else if (problem != null) {
                     toast("The server's transcript for this book: $problem")
@@ -699,7 +764,7 @@ class PlaybackService : Service() {
             mainHandler.postDelayed({ useServerMap(id, toml) }, 500)
             return
         }
-        if (mapName != null && runCatching { lastMapFile.readText() }.getOrNull() == toml) return
+        if (mapName != null && storage.map("abs:$id")?.first == toml) return
         // With nowhere to find the music, the map would only fail.
         if (!engine.hasMusicServer && musicDir == null) return
         loadMap(toml, "$SERVER_MAP (server)") { problem ->
@@ -858,30 +923,40 @@ class PlaybackService : Service() {
     private fun savePosition() {
         lastSaveMs = now()
         if (speechName == null || last.getString("kind", null) == null) return
-        last.edit().putLong("positionMs", engine.positionMs).apply()
+        val at = engine.positionMs
+        last.edit().putLong("positionMs", at).apply()
+        last.getString("key", null)?.let { key ->
+            if (storage.book(key) != null) storage.update(key, key) { it.copy(positionMs = at) }
+        }
     }
 
     /**
      * Keep [key]'s book as the one to reopen. A map is written for one
-     * book, so a different book lets the map go; the same book again
-     * keeps it.
+     * book, so a different book lets the map go and brings its own, if it
+     * has one; the same book again keeps it.
      */
     private fun rememberBook(key: String, fields: android.content.SharedPreferences.Editor.() -> Unit) {
         val same = last.getString("key", null) == key
-        val map = last.getString("map", null)
         val dozed = last.getLong("dozedAtMs", -1)
+        val transcript = storage.book(key)?.serverTranscript == true
         last.edit().clear().apply {
             fields()
             putString("key", key)
-            if (same && map != null) putString("map", map)
             if (same && dozed >= 0) putLong("dozedAtMs", dozed)
+            // Known from an earlier visit, so captions show even offline.
+            if (transcript) putBoolean("serverTranscript", true)
         }.commit()
-        if (!same && (mapName != null || engine.hasMap)) clearMap()
+        if (!same) {
+            if (mapName != null || engine.hasMap) dropMap()
+            restoreMap()
+        }
     }
 
     /** Keep the tokens, which change when the access token is renewed. */
     private fun saveServer(base: String) {
         val creds = engine.serverCredentials ?: return
+        // Books kept offline may have been waiting for the server.
+        if (keepBusy != null) fetchKept()
         val access = creds.substringBefore('\n')
         val refresh = creds.substringAfter('\n', "")
         prefs.edit()
@@ -958,7 +1033,9 @@ class PlaybackService : Service() {
         bookChosen = true
         serverBusy = "Opening ${book.title}…"
         Thread({
-            val problem = engine.serverOpen(book.id, libraryCache.absolutePath)
+            var problem = engine.serverOpen(book.id, libraryCache.absolutePath)
+            // Out of the server's reach, a book on the phone opens from its files.
+            if (problem != null && reopenKept("abs:${book.id}")) problem = null
             val file = if (problem == null) engine.serverBookFile else null
             serverBusy = null
             mainHandler.post {
@@ -975,9 +1052,16 @@ class PlaybackService : Service() {
                     showServerDetails(book.id, book.author.ifEmpty { null }, book.series.ifEmpty { null }, book.coverUrl)
                     downloadFailed = false
                     downloading = file == null
+                    storage.update("abs:${book.id}", book.title) {
+                        it.copy(
+                            title = book.title, author = book.author, series = book.series,
+                            coverUrl = book.coverUrl ?: it.coverUrl, durationMs = book.durationMs.coerceAtLeast(0),
+                        )
+                    }
+                    notePlayed("abs:${book.id}", book.title)
                     if (file != null) {
                         followWithTranscriber()
-                        nameDownloads(file, book.title)
+                        noteAudio(file)
                     }
                     fetchCompanions(book.id)
                     publishState()
@@ -1011,52 +1095,223 @@ class PlaybackService : Service() {
         val file = engine.serverBookFile ?: return
         downloading = false
         last.edit().putString("file", file).apply()
-        speechName?.let { nameDownloads(file, it) }
+        noteAudio(file)
         followWithTranscriber()
-    }
-
-    /** Note which book [files], a path a line, belong to, for the storage screen. */
-    private fun nameDownloads(files: String, title: String) {
-        val edit = downloadNames.edit()
-        files.lines().forEach { edit.putString(File(it).name, title) }
-        edit.apply()
-    }
-
-    /** The open server book's files, by name: kept when downloads are removed. */
-    private fun openFiles(): Set<String> =
-        engine.serverBookFile?.lines()?.map { File(it).name }?.toSet() ?: emptySet()
-
-    /** One file in the download cache. [title] is null for map music. */
-    data class Download(val file: File, val title: String?, val bytes: Long, val open: Boolean)
-
-    /** What the download cache holds. Reads the folder: call it off the main thread. */
-    fun downloads(): List<Download> {
-        val open = openFiles()
-        return (libraryCache.listFiles() ?: emptyArray())
-            .filter { it.isFile && !it.name.endsWith(".part") }
-            .map { Download(it, downloadNames.getString(it.name, null), it.length(), it.name in open) }
     }
 
     /** Bytes the cached covers take. Reads the folder: call it off the main thread. */
     fun coverBytes(): Long = (coverCache.listFiles() ?: emptyArray()).sumOf { it.length() }
 
+    fun removeCovers() {
+        coverCache.listFiles()?.forEach { it.delete() }
+    }
+
+    /** The open book just played: it is the last to go when making room. */
+    private fun notePlayed(key: String, title: String) {
+        storage.forget(listOf("legacy:$title"))
+        storage.update(key, title) { it.copy(played = System.currentTimeMillis()) }
+    }
+
+    /** The open book, [files] a path a line, is whole in the cache. Then make room. */
+    private fun noteAudio(files: String) {
+        val key = last.getString("key", null) ?: return
+        storage.update(key, speechName ?: key) { it.copy(audio = files.lines().map { l -> File(l).name }, complete = true) }
+        keepInBudget()
+    }
+
     /**
-     * Delete cached files. The open book is kept, since it is playing
-     * from that file. Music the map needs again downloads again.
+     * Note which cached files [toml]'s music lives in, as part of book
+     * [key], so removing the book knows its music from music another book
+     * shares. A book kept offline has the music downloaded too, when
+     * downloads are allowed now.
      */
-    fun removeDownloads(files: List<File>, covers: Boolean = false): Int {
-        val open = openFiles()
-        var n = 0
-        for (f in files) {
-            if (f.name in open) continue
-            if (f.delete()) {
-                n++
-                downloadNames.edit().remove(f.name).apply()
+    private fun noteMapMusic(key: String, toml: String) {
+        keeper.execute {
+            val book = storage.book(key)
+            noteMapMusicNow(key, book?.title ?: speechName ?: key, toml, fetch = book?.pinned == true && downloadAllowed())
+            // Held back for Wi-Fi: wait for it with the rest.
+            if (book?.pinned == true) fetchKept()
+        }
+    }
+
+    /** On the keeper thread. Returns how many tracks would not download. */
+    private fun noteMapMusicNow(key: String, title: String, toml: String, fetch: Boolean): Int {
+        val o = org.json.JSONObject(engine.mapFiles(toml, libraryCache.absolutePath, fetch))
+        val files = o.optJSONArray("files") ?: run {
+            android.util.Log.w("underscore", "map music for $key: ${o.optString("error")}")
+            return 0
+        }
+        val names = (0 until files.length()).map { File(files.getString(it)).name }.toSet()
+        storage.update(key, title) { it.copy(music = names) }
+        val failed = o.optInt("failed")
+        if (failed > 0) android.util.Log.w("underscore", "map music for $key: $failed tracks failed, ${o.optString("error")}")
+        return failed
+    }
+
+    /**
+     * Open book [key] from its files on the phone, without the server.
+     * True when it was whole there. Blocks briefly: not on the main thread.
+     */
+    private fun reopenKept(key: String): Boolean {
+        val b = storage.book(key) ?: return false
+        val id = b.serverId ?: return false
+        val files = b.audio.map { File(libraryCache, it) }
+        if (!b.complete || files.isEmpty() || !files.all { it.isFile }) return false
+        if (!engine.serverReopen(id, files.joinToString("\n") { it.path })) return false
+        if (b.positionMs > 0) engine.seekMs(b.positionMs)
+        return true
+    }
+
+    /** Whether downloads for books kept offline may run now: online, and on Wi-Fi if the setting says so. */
+    fun downloadAllowed(): Boolean {
+        val cm = getSystemService(ConnectivityManager::class.java) ?: return false
+        val caps = cm.getNetworkCapabilities(cm.activeNetwork) ?: return false
+        if (!caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)) return false
+        return !settings.wifiOnly || caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_METERED)
+    }
+
+    /** Keep server book [book] whole on the phone, with its map and music, or stop keeping it. */
+    fun keepOffline(book: ServerBook, on: Boolean) {
+        storage.update("abs:${book.id}", book.title) {
+            it.copy(
+                title = book.title, author = book.author, series = book.series,
+                coverUrl = book.coverUrl ?: it.coverUrl, durationMs = book.durationMs.coerceAtLeast(0), pinned = on,
+            )
+        }
+        if (on) fetchKept() else keepInBudget()
+    }
+
+    /** The open server book's [keepOffline]. */
+    fun keepOpenBookOffline(on: Boolean) {
+        val key = last.getString("key", null)?.takeIf { it.startsWith("abs:") } ?: return
+        storage.update(key, speechName ?: key) { it.copy(pinned = on) }
+        if (on) fetchKept() else keepInBudget()
+    }
+
+    /** The open book's key, such as `abs:<id>`, or null. */
+    val openKey: String? get() = last.getString("key", null)
+
+    /** Whether the open book is kept offline. */
+    val openBookKept: Boolean get() = last.getString("key", null)?.let { storage.book(it)?.pinned } == true
+
+    /** What a book kept offline still lacks on the phone. */
+    private fun lacks(b: Storage.Book): Boolean {
+        val audio = !b.complete || b.audio.isEmpty() || b.audio.any { !File(libraryCache, it).isFile }
+        val music = storage.map(b.key) != null && (b.music.isEmpty() || b.music.any { !File(libraryCache, it).isFile })
+        return audio || music
+    }
+
+    /** Download what books kept offline still lack, one book at a time, then make room. */
+    fun fetchKept() {
+        if (!keepQueued.compareAndSet(false, true)) return
+        keeper.execute {
+            keepQueued.set(false)
+            val wanting = storage.books().filter { it.pinned && it.serverId != null && lacks(it) }
+            for (b in wanting) {
+                if (!downloadAllowed()) {
+                    keepBusy = if (settings.wifiOnly) "Waiting for Wi-Fi to download ${wanting.size} kept offline" else "Waiting for a connection"
+                    return@execute
+                }
+                if (!engine.hasServer) {
+                    keepBusy = "Waiting for the server to download ${wanting.size} kept offline"
+                    return@execute
+                }
+                keepBook(b)
+            }
+            keepBusy = null
+            trimNow()
+        }
+    }
+
+    /** On the keeper thread: the book's audio, map, transcript, cover, and map music. */
+    private fun keepBook(b: Storage.Book) {
+        val id = b.serverId ?: return
+        // The open book comes down as it plays, or is about to.
+        val open = last.getString("key", null) == b.key && engine.serverBookFile == null
+        if (!open && (!b.complete || b.audio.any { !File(libraryCache, it).isFile })) {
+            keepBusy = "Downloading ${b.title} for offline"
+            val o = org.json.JSONObject(engine.serverDownloadBook(id, libraryCache.absolutePath))
+            val files = o.optJSONArray("files")
+            if (files == null) {
+                android.util.Log.w("underscore", "keeping ${b.title}: ${o.optString("error")}")
+                return
+            }
+            val names = (0 until files.length()).map { File(files.getString(it)).name }
+            storage.update(b.key, b.title) { it.copy(audio = names, complete = true) }
+        }
+        if (storage.map(b.key) == null) {
+            engine.serverCompanion(id, SERVER_MAP)?.toString(Charsets.UTF_8)?.let { storage.saveMap(b.key, it, "$SERVER_MAP (server)") }
+        }
+        if (!b.serverTranscript) {
+            engine.serverCompanion(id, SERVER_TRANSCRIPT)?.let { bytes ->
+                if (engine.transcribeImport(File(filesDir, "whisper").absolutePath, b.key, bytes) == null) {
+                    storage.update(b.key, b.title) { it.copy(serverTranscript = true) }
+                }
             }
         }
-        if (covers) coverCache.listFiles()?.forEach { it.delete() }
-        return n
+        b.coverUrl?.let { url -> mainHandler.post { Covers.load(this, id, url) {} } }
+        storage.map(b.key)?.let { (toml, _) ->
+            keepBusy = "Downloading the music for ${b.title}"
+            noteMapMusicNow(b.key, b.title, toml, fetch = true)
+        }
     }
+
+    /** Make room in the background, down to the budget in Settings. */
+    fun keepInBudget() {
+        keeper.execute { trimNow() }
+    }
+
+    /** On the keeper thread. While the open book streams its parts are not listed yet, so only removals run. */
+    private fun trimNow() {
+        val budget = if (streaming) null else settings.storageBudget
+        cacheBytes = storage.trim(engine, libraryCache, budget, last.getString("key", null), openFiles())
+    }
+
+    /**
+     * Remove book [key] from the phone, with the music only it used. Its
+     * map and transcript stay: they are small, and a transcript made on
+     * the phone takes hours to make again. Not the open book. [done] runs
+     * on the main thread.
+     */
+    fun removeBook(key: String, done: () -> Unit) {
+        Thread({
+            if (key != last.getString("key", null)) {
+                cacheBytes = storage.trim(engine, libraryCache, null, last.getString("key", null), openFiles(), listOf(key))
+            }
+            mainHandler.post(done)
+        }, "underscore-storage").start()
+    }
+
+    /** Delete cache files no book lists. Not while the open book streams, whose parts are not listed yet. */
+    fun removeUnlisted(done: () -> Unit) {
+        Thread({
+            if (!streaming) {
+                val busy = openFiles()
+                storage.unlisted(libraryCache).filter { it.name !in busy }.forEach { it.delete() }
+            }
+            mainHandler.post(done)
+        }, "underscore-storage").start()
+    }
+
+    /** Books on the phone, as the book list shows them, for when the server is out of reach. */
+    fun keptBooks(): List<ServerBook> {
+        val open = last.getString("key", null)
+        return storage.books().filter { it.complete && it.serverId != null }.map { b ->
+            ServerBook(
+                id = b.serverId!!, title = b.title, author = b.author, series = b.series,
+                durationMs = b.durationMs, addedMs = 0, files = b.audio.size, coverUrl = b.coverUrl,
+                progress = if (b.durationMs > 0 && b.positionMs > 0) b.positionMs.toDouble() / b.durationMs else -1.0,
+                finished = false, playedMs = b.played, open = b.key == open,
+            )
+        }
+    }
+
+    /** The open server book is still coming down, so its finished parts are not listed yet. */
+    private val streaming: Boolean get() = engine.serverDownload != null && engine.serverBookFile == null
+
+    /** The open server book's files, by name: never removed while it is open. */
+    private fun openFiles(): Set<String> =
+        engine.serverBookFile?.lines()?.map { File(it).name }?.toSet() ?: emptySet()
 
     /** Tell the server where the book is. Cheap when there is no server book. */
     private fun syncServer() {
@@ -1110,6 +1365,7 @@ class PlaybackService : Service() {
             appendLine("server: ${serverUrl ?: "none"}, signed in ${engine.hasServer}, busy ${serverBusy ?: "no"}")
             appendLine("session: active ${session.isActive}")
             appendLine("beside the book on the server: ${companions ?: "not asked"}")
+            appendLine("storage: budget ${settings.storageBudget ?: "none"}, wifi only ${settings.wifiOnly}, cache $cacheBytes bytes, keeping ${keepBusy ?: "idle"}, kept ${storage.books().filter { it.pinned }.joinToString { it.title }.ifEmpty { "none" }}")
             appendLine("sleep: auto ${settings.sleepAuto}, listening ${Sleep.sources.filter { Sleep.listening(settings, it) }.joinToString { it.key }.ifEmpty { "none" }}, shake ${settings.sleepShake}, dozed at $dozedAtMs, winding down for ${windingDownFor ?: "none"}, stopped for ${stoppedFor ?: "none"}")
             appendLine("sleep log, latest:\n${SleepLog.text(this@PlaybackService, 20)}")
             appendLine("sleep: phone readings:\n${PhoneSleep.readings(this@PlaybackService)}")

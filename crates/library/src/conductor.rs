@@ -149,6 +149,25 @@ impl Conductor {
     }
 }
 
+/// Every item `map` plays from `music`, each once, in map order, without
+/// fitting it to a book. For fetching a map's music ahead, and for knowing
+/// which cached files a book's map uses. Searches only; a server library
+/// loads its song list first if it has not.
+///
+/// # Errors
+/// The library failed.
+pub fn items(map: &Map, music: &dyn Library) -> Result<Vec<ItemId>, Error> {
+    let mut out: Vec<ItemId> = Vec::new();
+    for cue in &map.cues {
+        if let Some(id) = resolve(cue, music)?.item()
+            && !out.contains(id)
+        {
+            out.push(id.clone());
+        }
+    }
+    Ok(out)
+}
+
 fn resolve(cue: &underscore_map::Cue, music: &dyn Library) -> Result<Resolution, Error> {
     if cue.silence {
         return Ok(Resolution::Silence);
@@ -278,6 +297,21 @@ mod tests {
                 Resolution::Vibe(ItemId::from("Debussy/Clair de Lune")),
                 Resolution::Silence,
                 Resolution::Missing,
+            ]
+        );
+    }
+
+    #[test]
+    fn a_maps_items_are_listed_once_each_without_a_book() {
+        let twice = format!(
+            "{MAP}\n[[cue]]\nat = \"4:00\"\ntrack = {{ artist = \"Yo-Yo Ma\", title = \"Prelude\" }}\n"
+        );
+        let map = Map::parse(&twice).unwrap();
+        assert_eq!(
+            items(&map, &library()).unwrap(),
+            vec![
+                ItemId::from("Yo-Yo Ma/Prelude"),
+                ItemId::from("Debussy/Clair de Lune"),
             ]
         );
     }

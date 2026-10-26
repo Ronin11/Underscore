@@ -473,6 +473,44 @@ impl Audiobookshelf {
         Ok(Opened::Parts(parts))
     }
 
+    /// Download every audio file of book `id` whole into the cache, under
+    /// the same names [`Audiobookshelf::open_streaming`] uses, so a book
+    /// kept for offline listening opens from the cache later. Files
+    /// already there are not fetched again. Slow: run it off the main
+    /// thread, and not for a book that is streaming now.
+    ///
+    /// # Errors
+    /// The server could not be reached, or a file could not be written.
+    pub fn download(&self, id: &ItemId, cache: &Cache) -> Result<Vec<PathBuf>, Error> {
+        let files = self.audio_files(id)?;
+        let single = files.len() == 1;
+        let mut out = Vec::with_capacity(files.len());
+        for file in &files {
+            let key = if single {
+                id.clone()
+            } else {
+                ItemId(format!("{id}#{}", file.ino))
+            };
+            let path = format!("/api/items/{id}/file/{}", file.ino);
+            out.push(cache.get_or_fill(&self.name, &key, &file.ext, |out| {
+                self.copy_whole(&path, out)
+            })?);
+        }
+        Ok(out)
+    }
+
+    /// The whole of the server's file at `path`, byte for byte, into `out`.
+    fn copy_whole(&self, path: &str, out: &mut std::fs::File) -> io::Result<()> {
+        let mut resp = self.get(path).map_err(io::Error::other)?;
+        let status = resp.status().as_u16();
+        if status != 200 {
+            return Err(io::Error::other(format!("GET {path}: HTTP {status}")));
+        }
+        let mut body = resp.body_mut().with_config().limit(u64::MAX).reader();
+        io::copy(&mut body, out)?;
+        Ok(())
+    }
+
     /// One audio file of book `id`, cached under `key`.
     fn open_part(
         self: &Arc<Self>,
@@ -766,16 +804,8 @@ impl Library for Audiobookshelf {
             )));
         };
         let path = format!("/api/items/{id}/file/{}", file.ino);
-        let cached = cache.get_or_fill(&self.name, id, &file.ext, |out| {
-            let mut resp = self.get(&path).map_err(io::Error::other)?;
-            let status = resp.status().as_u16();
-            if status != 200 {
-                return Err(io::Error::other(format!("GET {path}: HTTP {status}")));
-            }
-            let mut body = resp.body_mut().with_config().limit(u64::MAX).reader();
-            io::copy(&mut body, out)?;
-            Ok(())
-        })?;
+        let cached =
+            cache.get_or_fill(&self.name, id, &file.ext, |out| self.copy_whole(&path, out))?;
         Ok(cached)
     }
 

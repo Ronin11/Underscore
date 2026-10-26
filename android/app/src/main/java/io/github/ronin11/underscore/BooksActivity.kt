@@ -33,11 +33,14 @@ import io.github.ronin11.underscore.PlaybackService.ServerBook
  * Covers come straight from the server, which serves them without a
  * login, and are kept under the cache folder so the list opens quickly
  * next time.
+ *
+ * A long press keeps a book offline. When the server is out of reach the
+ * list shows the books on the phone instead, which open from their files.
  */
 class BooksActivity : ServiceActivity() {
 
     private enum class Show(val label: String) {
-        ALL("All"), STARTED("In progress"), NEW("Not started"), DONE("Finished"),
+        ALL("All"), STARTED("In progress"), NEW("Not started"), DONE("Finished"), PHONE("On this phone"),
     }
 
     private enum class Order(val label: String) {
@@ -57,6 +60,10 @@ class BooksActivity : ServiceActivity() {
     private var order = Order.PLAYED
     private var loading = false
     private var problem: String? = null
+    /** The server could not be reached; the list is the books on the phone. */
+    private var offline = false
+    /** What is on the phone, by server book id. */
+    private var onPhone: Map<String, Storage.Book> = emptyMap()
     private val prefs by lazy { getSharedPreferences("books", MODE_PRIVATE) }
 
 
@@ -75,7 +82,9 @@ class BooksActivity : ServiceActivity() {
 
     override fun onServiceReady() {
         val s = service ?: return
+        notePhone()
         if (!s.engine.hasServer) {
+            if (showKept()) return
             problem = "Not signed in to Audiobookshelf"
             apply()
             serverDialog()
@@ -104,9 +113,48 @@ class BooksActivity : ServiceActivity() {
         apply()
         s.serverBooks { books, why ->
             loading = false
-            if (books != null) all = books else problem = why ?: "No books"
+            offline = false
+            if (books != null) {
+                all = books
+            } else if (!showKept()) {
+                problem = why ?: "No books"
+            }
             apply()
         }
+    }
+
+    /** Show the books on the phone, for when the server is out of reach. False if there are none. */
+    private fun showKept(): Boolean {
+        val kept = service?.keptBooks().orEmpty()
+        if (kept.isEmpty()) return false
+        offline = true
+        all = kept
+        apply()
+        return true
+    }
+
+    private fun notePhone() {
+        onPhone = service?.storage?.books().orEmpty().mapNotNull { b -> b.serverId?.let { it to b } }.toMap()
+    }
+
+    /** Keep a book offline, or stop. */
+    private fun keepDialog(book: ServerBook) {
+        val s = service ?: return
+        val kept = onPhone[book.id]?.pinned == true
+        val wifi = if (s.settings.wifiOnly) " It downloads on Wi-Fi." else ""
+        AlertDialog.Builder(this)
+            .setTitle(book.title)
+            .setMessage(
+                if (kept) "Kept offline. Stop keeping it, and it can be removed to make room like any other book."
+                else "Download the whole book, its map, and the map's music, and keep them until you say otherwise.$wifi",
+            )
+            .setPositiveButton(if (kept) "Stop keeping" else "Keep offline") { _, _ ->
+                s.keepOffline(book, !kept)
+                notePhone()
+                apply()
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
     }
 
     private fun sortDialog() {
@@ -152,6 +200,7 @@ class BooksActivity : ServiceActivity() {
         Show.STARTED -> b.progress >= 0 && !b.finished
         Show.NEW -> b.progress < 0 && !b.finished
         Show.DONE -> b.finished
+        Show.PHONE -> onPhone[b.id]?.let { it.complete || it.pinned } == true
     }
 
     private fun comparator(): Comparator<ServerBook> {
@@ -176,7 +225,9 @@ class BooksActivity : ServiceActivity() {
     override fun refresh() {
         val s = service ?: return
         bar.subtitle = s.serverBusy
+            ?: s.keepBusy
             ?: if (loading) "Checking the server…"
+            else if (offline) "Server out of reach: books on this phone"
             else s.serverUrl?.removePrefix("https://")?.removePrefix("http://")
     }
 
@@ -260,6 +311,10 @@ class BooksActivity : ServiceActivity() {
             adapter = this@BooksActivity.adapter
             divider = null
             setOnItemClickListener { _, _, position, _ -> shown.getOrNull(position)?.let { open(it) } }
+            setOnItemLongClickListener { _, _, position, _ ->
+                shown.getOrNull(position)?.let { keepDialog(it) }
+                true
+            }
         }
         root.addView(listView, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
         return root
@@ -306,6 +361,13 @@ class BooksActivity : ServiceActivity() {
     private fun meta(b: ServerBook): String {
         val parts = ArrayList<String>()
         if (b.open) parts.add("Open now")
+        onPhone[b.id]?.let { p ->
+            when {
+                p.pinned && p.complete -> parts.add("Kept offline")
+                p.pinned -> parts.add("Keeping offline…")
+                p.complete -> parts.add("On this phone")
+            }
+        }
         when {
             b.finished -> parts.add("Finished")
             b.progress >= 0 && b.durationMs > 0 ->

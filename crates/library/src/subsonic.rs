@@ -240,6 +240,18 @@ impl Subsonic {
     }
 }
 
+impl Subsonic {
+    /// The file extension a song is cached under, from the song list.
+    fn ext(&self, id: &ItemId) -> Option<String> {
+        let songs = self
+            .songs
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let song = songs.items.iter().find(|i| &i.id == id)?;
+        Some(song.format.clone().unwrap_or_else(|| "mp3".to_string()))
+    }
+}
+
 impl Library for Subsonic {
     fn name(&self) -> &str {
         &self.name
@@ -301,17 +313,7 @@ impl Library for Subsonic {
 
     fn fetch(&self, id: &ItemId, cache: &Cache) -> Result<PathBuf, Error> {
         self.ensure_loaded()?;
-        let ext = self
-            .songs
-            .read()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .items
-            .iter()
-            .find(|i| &i.id == id)
-            .ok_or_else(|| Error::NotFound(id.clone()))?
-            .format
-            .clone()
-            .unwrap_or_else(|| "mp3".to_string());
+        let ext = self.ext(id).ok_or_else(|| Error::NotFound(id.clone()))?;
         let cached = cache.get_or_fill(&self.name, id, &ext, |out| {
             let mut resp = self
                 .get("download", &[("id", id.0.as_str())])
@@ -336,6 +338,10 @@ impl Library for Subsonic {
             Ok(())
         })?;
         Ok(cached)
+    }
+
+    fn cache_path(&self, id: &ItemId, cache: &Cache) -> Option<PathBuf> {
+        Some(cache.path_for(&self.name, id, &self.ext(id)?))
     }
 
     fn progress(&self, _id: &ItemId) -> Result<Option<Duration>, Error> {
@@ -643,7 +649,10 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("underscore-subsonic-{}", std::process::id()));
         let cache = Cache::open(&dir).unwrap();
         let id = ItemId::from("s1");
+        lib.refresh_items().unwrap();
+        let ahead = lib.cache_path(&id, &cache).unwrap();
         let path = lib.fetch(&id, &cache).unwrap();
+        assert_eq!(ahead, path, "the path is known before the fetch");
         assert_eq!(std::fs::read(&path).unwrap(), bytes);
         assert_eq!(path.extension().and_then(|e| e.to_str()), Some("mp3"));
         let served = count.load(Ordering::SeqCst);

@@ -1106,3 +1106,91 @@ pub extern "system" fn Java_io_github_ronin11_underscore_Engine_nativeTranscribe
 ) {
     crate::transcript::stop();
 }
+
+/// Which downloads to drop to fit the budget: an [`underscore_library::keep::Ask`]
+/// as JSON in, a [`underscore_library::keep::Plan`] as JSON out, or
+/// `{"error": ...}`. Pure; does not delete anything.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_io_github_ronin11_underscore_Engine_nativeStoragePlan(
+    mut env: JNIEnv,
+    _this: JObject,
+    _handle: jlong,
+    ask: JString,
+) -> jstring {
+    let answer = match string(&mut env, &ask)
+        .ok_or_else(|| "nothing to plan".to_string())
+        .and_then(|a| serde_json::from_str(&a).map_err(|e| e.to_string()))
+    {
+        Ok(ask) => serde_json::to_value(underscore_library::keep::plan(&ask))
+            .unwrap_or_else(|e| serde_json::json!({ "error": e.to_string() })),
+        Err(e) => serde_json::json!({ "error": e }),
+    };
+    jstr(&env, &answer.to_string())
+}
+
+/// Download every audio file of server book `id` into `cache_dir`, for
+/// listening offline. `{"files": [paths]}` or `{"error": ...}`. Slow: call
+/// it on a background thread, and not for the book streaming now.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_io_github_ronin11_underscore_Engine_nativeServerDownloadBook(
+    mut env: JNIEnv,
+    _this: JObject,
+    handle: jlong,
+    id: JString,
+    cache_dir: JString,
+) -> jstring {
+    let args = (string(&mut env, &id), string(&mut env, &cache_dir));
+    let answer = |v: serde_json::Value| jstr(&env, &v.to_string());
+    let (Some(id), Some(cache_dir)) = args else {
+        return answer(serde_json::json!({ "error": "book and cache folder are both needed" }));
+    };
+    // Only the client comes out from under the lock; the download runs outside it.
+    let Some(server) = with(handle, None, |b| b.server()) else {
+        return answer(serde_json::json!({ "error": "not signed in" }));
+    };
+    let result = Cache::open(PathBuf::from(cache_dir))
+        .map_err(|e| e.to_string())
+        .and_then(|cache| {
+            server
+                .download(&ItemId(id), &cache)
+                .map_err(|e| e.to_string())
+        });
+    match result {
+        Ok(files) => answer(serde_json::json!({ "files": files })),
+        Err(e) => answer(serde_json::json!({ "error": e })),
+    }
+}
+
+/// The cache files map `toml`'s music lives in on the music server, and
+/// with `fetch` download them first. `{"files": [paths], "failed": n,
+/// "error": ...}`. No music server means no files. Slow: call it on a
+/// background thread.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_io_github_ronin11_underscore_Engine_nativeMapFiles(
+    mut env: JNIEnv,
+    _this: JObject,
+    handle: jlong,
+    toml: JString,
+    cache_dir: JString,
+    fetch: jboolean,
+) -> jstring {
+    let args = (string(&mut env, &toml), string(&mut env, &cache_dir));
+    let answer = |v: serde_json::Value| jstr(&env, &v.to_string());
+    let (Some(toml), Some(cache_dir)) = args else {
+        return answer(serde_json::json!({ "error": "map and cache folder are both needed" }));
+    };
+    let Some(server) = with(handle, None, |b| b.music_server()) else {
+        return answer(serde_json::json!({ "files": [], "failed": 0 }));
+    };
+    match Bridge::map_files(
+        &toml,
+        server.as_ref(),
+        &PathBuf::from(cache_dir),
+        fetch != JNI_FALSE,
+    ) {
+        Ok(m) => {
+            answer(serde_json::json!({ "files": m.files, "failed": m.failed, "error": m.error }))
+        }
+        Err(e) => answer(serde_json::json!({ "error": e })),
+    }
+}

@@ -3,6 +3,8 @@
 
     <!-- Talking to the listener's own Audiobookshelf server. -->
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Books kept offline wait for Wi-Fi when the setting says so. -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
