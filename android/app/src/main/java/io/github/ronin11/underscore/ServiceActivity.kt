@@ -29,11 +29,22 @@ import java.util.Locale
 
 /**
  * What every screen shares: a binding to [PlaybackService], a half-second
- * refresh while the screen is in front, a toolbar, and the small helpers
- * for building views in code. Screens override [refresh] and fill their
- * own layout.
+ * refresh while the screen is in front, a toolbar, the tabs along the
+ * bottom, and the small helpers for building views in code. Screens
+ * override [refresh] and fill their own layout.
  */
 abstract class ServiceActivity : AppCompatActivity() {
+
+    /** The four screens along the bottom. */
+    enum class Tab(val label: String, val icon: Int, val screen: Class<out ServiceActivity>) {
+        PLAYER("Player", R.drawable.ic_tab_player, MainActivity::class.java),
+        LIBRARY("Library", R.drawable.ic_tab_library, BooksActivity::class.java),
+        CONNECTIONS("Connections", R.drawable.ic_tab_connections, ConnectionsActivity::class.java),
+        SETTINGS("Settings", R.drawable.ic_tab_settings, SettingsActivity::class.java),
+    }
+
+    /** The tab this screen is, or null for a screen with no tabs, such as Debug. */
+    protected open val tab: Tab? = null
 
     protected var service: PlaybackService? = null
         private set
@@ -61,7 +72,17 @@ abstract class ServiceActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContentView(buildUi())
+        val content = buildUi()
+        val here = tab
+        setContentView(
+            if (here == null) content
+            else LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                addView(content, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+                addView(divider())
+                addView(tabBar(here))
+            },
+        )
         fitSystemBars()
         val intent = Intent(this, PlaybackService::class.java)
         ContextCompat.startForegroundService(this, intent)
@@ -109,6 +130,62 @@ abstract class ServiceActivity : AppCompatActivity() {
             WindowInsetsCompat.CONSUMED
         }
     }
+
+    /**
+     * Go to another tab. The player stays underneath the others, so Back
+     * from any tab lands on it; the tab being left closes unless it is the
+     * player.
+     */
+    protected fun go(to: Tab, extras: Intent.() -> Unit = {}) {
+        if (to == tab) return
+        startActivity(Intent(this, to.screen).addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT).apply(extras))
+        @Suppress("DEPRECATION")
+        overridePendingTransition(0, 0)
+        if (tab != Tab.PLAYER) {
+            finish()
+            @Suppress("DEPRECATION")
+            overridePendingTransition(0, 0)
+        }
+    }
+
+    private fun tabBar(here: Tab): View = LinearLayout(this).apply {
+        orientation = LinearLayout.HORIZONTAL
+        val accent = themeColor(androidx.appcompat.R.attr.colorAccent)
+        val plain = themeColor(android.R.attr.textColorSecondary)
+        for (t in Tab.entries) {
+            val color = if (t == here) accent else plain
+            val item = LinearLayout(context).apply {
+                orientation = LinearLayout.VERTICAL
+                gravity = Gravity.CENTER
+                setPadding(0, dp(8), 0, dp(6))
+                isClickable = true
+                isFocusable = true
+                contentDescription = t.label
+                setBackgroundResource(selectableBackground())
+                addView(
+                    android.widget.ImageView(context).apply {
+                        setImageResource(t.icon)
+                        imageTintList = android.content.res.ColorStateList.valueOf(color)
+                    },
+                    LinearLayout.LayoutParams(dp(24), dp(24)),
+                )
+                addView(TextView(context).apply {
+                    text = t.label
+                    textSize = 11f
+                    setTextColor(color)
+                    gravity = Gravity.CENTER
+                })
+                setOnClickListener { go(t) }
+            }
+            addView(item, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        }
+    }
+
+    /** A picked file's name, for showing. */
+    protected fun displayName(uri: android.net.Uri): String? =
+        contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)?.use { c ->
+            if (c.moveToFirst()) c.getString(0) else null
+        }
 
     /** The screen's whole layout, built once after the activity is up. */
     protected abstract fun buildUi(): View

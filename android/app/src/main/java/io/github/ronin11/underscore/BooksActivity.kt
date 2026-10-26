@@ -28,7 +28,7 @@ import io.github.ronin11.underscore.PlaybackService.ServerBook
  * The Audiobookshelf books on a screen of their own: covers, where the
  * listener is in each, a search across title, author and series, a filter
  * by progress, and a choice of order. Tapping a book downloads it and goes
- * back to the player, which shows the download in its app bar.
+ * to the player, which shows the download in its app bar.
  *
  * Covers come straight from the server, which serves them without a
  * login, and are kept under the cache folder so the list opens quickly
@@ -38,6 +38,15 @@ import io.github.ronin11.underscore.PlaybackService.ServerBook
  * list shows the books on the phone instead, which open from their files.
  */
 class BooksActivity : ServiceActivity() {
+
+    override val tab = Tab.LIBRARY
+
+    private val pickFile = registerForActivityResult(androidx.activity.result.contract.ActivityResultContracts.OpenDocument()) { uri ->
+        val s = service ?: return@registerForActivityResult
+        uri ?: return@registerForActivityResult
+        val name = displayName(uri)
+        if (s.loadSpeech(uri, name)) go(Tab.PLAYER) else toast("Could not open ${name ?: "file"}")
+    }
 
     private enum class Show(val label: String) {
         ALL("All"), STARTED("In progress"), NEW("Not started"), DONE("Finished"), PHONE("On this phone"),
@@ -98,7 +107,9 @@ class BooksActivity : ServiceActivity() {
     override fun onCreateOptionsMenu(menu: Menu): Boolean {
         menu.add("Sort").setOnMenuItemClickListener { sortDialog(); true }
         menu.add("Refresh").setOnMenuItemClickListener { reload(); true }
-        menu.add("Audiobookshelf server…").setOnMenuItemClickListener { serverDialog(); true }
+        menu.add("Open a file…").setOnMenuItemClickListener {
+            pickFile.launch(arrayOf("audio/*", "application/ogg", "video/mp4")); true
+        }
         return true
     }
 
@@ -234,14 +245,14 @@ class BooksActivity : ServiceActivity() {
     private fun open(book: ServerBook) {
         val s = service ?: return
         if (book.open) {
-            finish()
+            go(Tab.PLAYER)
             return
         }
         val app = applicationContext
         s.openServerBook(book) { why ->
             Toast.makeText(app, why ?: "Loaded ${book.title}", Toast.LENGTH_LONG).show()
         }
-        finish()
+        go(Tab.PLAYER)
     }
 
     override fun buildUi(): View {
@@ -250,7 +261,7 @@ class BooksActivity : ServiceActivity() {
             // Keeps the search box from taking focus and raising the keyboard on arrival.
             isFocusableInTouchMode = true
         }
-        bar = toolbar("Books", up = true)
+        bar = toolbar("Library", up = false)
         root.addView(bar)
 
         search = EditText(this).apply {

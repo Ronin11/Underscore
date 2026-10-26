@@ -1,22 +1,13 @@
 package io.github.ronin11.underscore
 
-import android.Manifest
-import android.content.pm.PackageManager
-import android.net.Uri
-import android.os.Build
-import android.os.Environment
-import android.provider.DocumentsContract
 import android.view.View
 import android.view.ViewGroup
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.SeekBar
 import android.widget.TextView
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.widget.SwitchCompat
-import androidx.core.content.ContextCompat
-import java.io.File
 
 /**
  * The listener's choices. Each row writes to [Settings]; the service
@@ -24,6 +15,8 @@ import java.io.File
  * touches the engine directly except to read what to show.
  */
 class SettingsActivity : ServiceActivity() {
+
+    override val tab = Tab.SETTINGS
 
     private val settings by lazy { Settings(this) }
     private lateinit var skipBack: Row
@@ -33,22 +26,12 @@ class SettingsActivity : ServiceActivity() {
     private lateinit var shake: SwitchCompat
     private lateinit var musicLevel: SeekBar
     private lateinit var musicLevelValue: TextView
-    private lateinit var musicFolder: Row
-    private lateinit var server: Row
-    private lateinit var musicServer: Row
     private lateinit var storage: Row
     private lateinit var budget: SeekBar
     private lateinit var budgetValue: TextView
     private lateinit var wifiOnly: SwitchCompat
     /** What the download cache holds, measured off the main thread. */
     @Volatile private var storageSummary: String? = null
-
-    private val pickMusicFolder = registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
-        uri?.let { chooseMusicFolder(it) }
-    }
-    private val askAudioRead = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-        if (!granted) toast("Without audio access the music folder cannot be read")
-    }
 
     override fun refresh() {
         skipBack.summary = "${settings.skipBackSec} seconds"
@@ -58,22 +41,7 @@ class SettingsActivity : ServiceActivity() {
         if (!shake.isPressed) shake.isChecked = settings.sleepShake
         if (!musicLevel.isPressed) musicLevel.progress = settings.musicLevel
         musicLevelValue.text = "${settings.musicLevel}%"
-        musicFolder.summary = settings.musicDir ?: "Not set. Used when no music server is signed in."
         val s = service
-        musicServer.summary = when {
-            s == null -> "Starting…"
-            s.musicServerBusy != null -> s.musicServerBusy
-            s.engine.hasMusicServer -> "Signed in to ${s.musicServerUrl}. Maps play from it."
-            s.musicServerUrl != null -> "${s.musicServerUrl}, not signed in"
-            else -> "Not signed in. Maps need this or a music folder."
-        }
-        server.summary = when {
-            s == null -> "Starting…"
-            s.serverBusy != null -> s.serverBusy
-            s.engine.hasServer -> "Signed in to ${s.serverUrl}"
-            s.serverUrl != null -> "${s.serverUrl}, not signed in"
-            else -> "Not signed in"
-        }
         if (!budget.isPressed) budget.progress = settings.storageStep
         budgetValue.text = budgetLabel(budget.progress)
         if (!wifiOnly.isPressed) wifiOnly.isChecked = settings.wifiOnly
@@ -223,38 +191,6 @@ class SettingsActivity : ServiceActivity() {
      * tree picker gives a document URI; on device storage that maps to a
      * path the scan can walk, given the audio permission.
      */
-    private fun chooseMusicFolder(uri: Uri) {
-        val dir = folderPath(uri)
-        if (dir == null) {
-            toast("Pick a folder on this device's storage")
-            return
-        }
-        settings.musicDir = dir.absolutePath
-        val permission = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            Manifest.permission.READ_MEDIA_AUDIO
-        } else {
-            Manifest.permission.READ_EXTERNAL_STORAGE
-        }
-        if (ContextCompat.checkSelfPermission(this, permission) != PackageManager.PERMISSION_GRANTED) {
-            askAudioRead.launch(permission)
-        }
-        refresh()
-    }
-
-    /** A document-tree URI as a path, when it is on device storage. */
-    private fun folderPath(uri: Uri): File? {
-        if (uri.authority != "com.android.externalstorage.documents") return null
-        val docId = DocumentsContract.getTreeDocumentId(uri)
-        val volume = docId.substringBefore(':')
-        val rel = docId.substringAfter(':', "")
-        val root = if (volume == "primary") {
-            Environment.getExternalStorageDirectory()
-        } else {
-            File("/storage/$volume")
-        }
-        return File(root, rel).takeIf { it.isDirectory }
-    }
-
     private fun switchRow(title: String, summary: String, onChange: (Boolean) -> Unit): Pair<View, SwitchCompat> {
         val toggle = SwitchCompat(this).apply {
             setOnCheckedChangeListener { v, checked -> if (v.isPressed) onChange(checked) }
@@ -276,7 +212,7 @@ class SettingsActivity : ServiceActivity() {
 
     override fun buildUi(): View {
         val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        root.addView(toolbar("Settings", up = true))
+        root.addView(toolbar("Settings", up = false))
         val list = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
 
         list.addView(heading("Listening"))
@@ -331,18 +267,6 @@ class SettingsActivity : ServiceActivity() {
                 addView(musicLevelValue, LinearLayout.LayoutParams(dp(48), ViewGroup.LayoutParams.WRAP_CONTENT))
             },
         )
-        musicFolder = row("Music folder", null) { pickMusicFolder.launch(null) }
-        list.addView(musicFolder.view)
-
-        list.addView(divider())
-        list.addView(heading("Music server"))
-        musicServer = row("Navidrome", null) { musicServerDialog() }
-        list.addView(musicServer.view)
-
-        list.addView(divider())
-        list.addView(heading("Audiobookshelf"))
-        server = row("Server", null) { serverDialog() }
-        list.addView(server.view)
 
         list.addView(divider())
         list.addView(heading("Storage"))
@@ -392,6 +316,11 @@ class SettingsActivity : ServiceActivity() {
         list.addView(divider())
         list.addView(heading("About"))
         list.addView(row("underscore", "Build ${BuildConfig.BUILD}, commit ${BuildConfig.COMMIT}", null).view)
+        list.addView(
+            row("Debug", "Music by hand, room noise, the transcriber, the sleep log, and the bug report.") {
+                startActivity(android.content.Intent(this, DebugActivity::class.java))
+            }.view,
+        )
 
         root.addView(ScrollView(this).apply { addView(list) })
         return root

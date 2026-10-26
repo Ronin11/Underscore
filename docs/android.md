@@ -12,31 +12,38 @@ A Kotlin shell over the Rust engine. The files that matter:
   handed to Rust, which owns it from then on. It also owns the media
   session, audio focus, and the notification; transport goes through it.
 - `ServiceActivity.kt` is what every screen shares: the binding to the
-  service, a half-second refresh while in front, the app bar, and the
-  helpers that build rows and dialogs in code. No layout XML, so nothing
-  to keep in sync.
-- `MainActivity.kt` is the player: the book and chapter, a scrub bar
-  across the current chapter with time left, previous and next chapter
-  around the skip and play buttons, and a tool bar along the bottom for
-  speed, sleep, chapters, and music. The app bar's menu holds the library
-  (a file, the server's books, the server sign-in) and the way to the
-  other two screens.
-- `SettingsActivity.kt` edits `Settings.kt`, one preferences file the
-  service watches and pushes into the engine: skip lengths, rewind on
-  resume, keep the screen on, the music level, the music folder maps play
-  from, and the Audiobookshelf sign-in.
-- `DebugActivity.kt` holds what belongs on neither: a music track played
-  by hand under the book, a fake room-noise level for the auto-level, the
-  live engine state, and the "Report a bug" button.
+  service, a half-second refresh while in front, the app bar, the four
+  tabs along the bottom, and the helpers that build rows and dialogs in
+  code. No layout XML, so nothing to keep in sync. Each tab is its own
+  activity; switching swaps them without animation, and the player stays
+  underneath, so Back from any tab lands on it.
+- `MainActivity.kt` is the Player tab: a tool row along the top for
+  speed, sleep, chapters, and music, then the book and chapter, a scrub
+  bar across the current chapter with time left, and previous and next
+  chapter around the skip and play buttons. The app bar's menu opens a
+  file and keeps the book offline.
+- `BooksActivity.kt` is the Library tab: the server's books, and a file
+  from the phone under its menu.
+- `ConnectionsActivity.kt` is the Connections tab: the Audiobookshelf
+  sign-in, the music server and the music folder maps play from, and the
+  sleep sources.
+- `SettingsActivity.kt` is the Settings tab. It edits `Settings.kt`, one
+  preferences file the service watches and pushes into the engine: skip
+  lengths, rewind on resume, keep the screen on, shake to undo sleep, the
+  music level, and storage. Its last row opens Debug.
+- `DebugActivity.kt` holds what belongs on none of them: a music track
+  played by hand under the book, a fake room-noise level for the
+  auto-level, the transcriber, the sleep log, the live engine state, and
+  the "Report a bug" button.
 - `BugReport.kt` builds the report text, and `UnderscoreApp.kt` saves
   the stack trace of a crash for it.
 
-Settings persist; the picked book, map, and position do not yet, and
-there is no library view.
+Settings persist, and so do the open book, each book's map, and the
+position; see "Coming back" below.
 
 ## Music maps
 
-Set the music folder in Settings, then load a map from the player's
+Set the music folder under Connections, then load a map from the player's
 Music menu (`docs/music-map.md`). The folder is a document-tree pick
 that the settings screen turns into a path on device storage, which is
 why the app asks for the audio permission: the engine scans the folder
@@ -60,7 +67,7 @@ cannot be scanned; pick one on the device or an SD card.
 
 ## Music server
 
-The Navidrome row in Settings, or any other Subsonic-compatible server,
+The Navidrome row under Connections, for Navidrome or any other Subsonic-compatible server,
 asks for the address, username, and password and signs in. What is kept
 is the user name and a salted token, never the password. Once signed in,
 maps play their music from the server instead of the music folder. The
@@ -75,11 +82,10 @@ those tags. The server's address has to be reachable from the phone: a
 
 ## Audiobookshelf
 
-"Audiobookshelf server" under the library menu, or the Server row in
-Settings, asks for the address, username, and password of an
+The Audiobookshelf row under Connections asks for the address, username, and password of an
 Audiobookshelf server and signs in; the tokens are kept in the app's
-private preferences and the password is not. "Server books" opens the book
-screen: every book the account can see, with its cover, author, series,
+private preferences and the password is not. The Library tab lists
+every book the account can see, with its cover, author, series,
 and how far the listener is. A search box matches title, author, and
 series; a row of filters picks all, in progress, not started, or
 finished; Sort orders by last played, recently added, title, author, or
@@ -291,7 +297,7 @@ to Settings, Storage:
   GB to "No limit", 5 GB to start. When the cache is over it, files no
   book uses go first, oldest first, then books played longest ago.
 - **Keep offline.** A long press on a book in the book list, or "Keep
-  this book offline" under Library on the player, downloads the whole
+  this book offline" in the player's menu, downloads the whole
   book, its map and transcript from beside it on the server, its cover,
   and every track its map plays. A book kept offline is never removed
   to make room. When the server is out of reach the book list shows
@@ -367,8 +373,8 @@ without going through the browser.
 
 ## Debugging
 
-The quickest way is the "Report a bug" button on the Debug screen, under
-the app bar's menu.
+The quickest way is the "Report a bug" button on the Debug screen, the
+last row of the Settings tab.
 It writes one text file with the build and commit, the device and Android
 version, whether notifications are allowed and which ones are posted (and
 whether the system saw them as media notifications), the audio outputs,

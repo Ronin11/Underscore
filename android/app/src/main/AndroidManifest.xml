@@ -41,21 +41,24 @@
         <activity
             android:name=".SettingsActivity"
             android:exported="false"
-            android:label="Settings"
-            android:parentActivityName=".MainActivity" />
+            android:label="Settings" />
 
         <activity
             android:name=".BooksActivity"
             android:exported="false"
-            android:label="Books"
-            android:parentActivityName=".MainActivity"
+            android:label="Library"
             android:windowSoftInputMode="stateHidden|adjustResize" />
+
+        <activity
+            android:name=".ConnectionsActivity"
+            android:exported="false"
+            android:label="Connections" />
 
         <activity
             android:name=".DebugActivity"
             android:exported="false"
             android:label="Debug"
-            android:parentActivityName=".MainActivity" />
+            android:parentActivityName=".SettingsActivity" />
 
         <!-- Where the browser returns after an Audiobookshelf single sign-on.
              Ours first; the stock address is what servers allow by default. -->

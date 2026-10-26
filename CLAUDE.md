@@ -41,9 +41,10 @@ crates/cli       `underscore` binary. `scan` and `map check`; no playback yet.
 android/         Gradle project. Engine.kt (JNI wrapper), PlaybackService.kt
                  (foreground service, AudioTrack render thread, media session,
                  audio focus), Settings.kt (the preferences the service applies
-                 to the engine), ServiceActivity.kt (what the screens share),
-                 MainActivity.kt (the player), BooksActivity.kt (the server's
-                 books), SettingsActivity.kt,
+                 to the engine), ServiceActivity.kt (what the screens share,
+                 and the tabs), four tabs: MainActivity.kt (the player),
+                 BooksActivity.kt (the library), ConnectionsActivity.kt
+                 (servers, music folder, sleep sources), SettingsActivity.kt;
                  DebugActivity.kt, BugReport.kt, Sleep.kt (the sources that
                  notice the listener fell asleep), SleepSetup.kt (their
                  setup and test screens), Shake.kt, Storage.kt (each

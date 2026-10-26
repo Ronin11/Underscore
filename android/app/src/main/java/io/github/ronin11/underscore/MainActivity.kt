@@ -1,14 +1,12 @@
 package io.github.ronin11.underscore
 
 import android.Manifest
-import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.res.ColorStateList
 import android.graphics.drawable.GradientDrawable
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
-import android.provider.OpenableColumns
 import android.view.Gravity
 import android.view.Menu
 import android.view.View
@@ -26,12 +24,13 @@ import androidx.appcompat.widget.PopupMenu
 import androidx.core.content.ContextCompat
 
 /**
- * The player screen: the book, the chapter, a scrub bar across the chapter,
- * transport, and a row of tools along the bottom. Everything else is a
- * menu away: the library under the app bar's menu, the listener's choices
- * under Settings, and the odds and ends for trying the engine under Debug.
+ * The player screen: a row of tools along the top, then the book, the
+ * chapter, a scrub bar across the chapter, and transport. The library,
+ * connections, and settings are the other tabs.
  */
 class MainActivity : ServiceActivity() {
+
+    override val tab = Tab.PLAYER
 
     private lateinit var bar: androidx.appcompat.widget.Toolbar
     private lateinit var coverView: android.widget.ImageView
@@ -77,22 +76,13 @@ class MainActivity : ServiceActivity() {
     }
 
     override fun onCreateOptionsMenu(menu: Menu): Boolean {
-        val library = menu.addSubMenu("Library")
-        library.add("Open a file…").setOnMenuItemClickListener { pickSpeech.launch(AUDIO_TYPES); true }
-        library.add("Server books…").setOnMenuItemClickListener { serverBooks(); true }
-        library.add("Audiobookshelf server…").setOnMenuItemClickListener { serverDialog(); true }
-        keepItem = library.add("Keep this book offline").apply {
+        menu.add("Open a file…").setOnMenuItemClickListener { pickSpeech.launch(AUDIO_TYPES); true }
+        keepItem = menu.add("Keep this book offline").apply {
             isCheckable = true
             setOnMenuItemClickListener {
                 service?.let { s -> s.keepOpenBookOffline(!s.openBookKept) }
                 true
             }
-        }
-        menu.add("Settings").setOnMenuItemClickListener {
-            startActivity(Intent(this, SettingsActivity::class.java)); true
-        }
-        menu.add("Debug").setOnMenuItemClickListener {
-            startActivity(Intent(this, DebugActivity::class.java)); true
         }
         return true
     }
@@ -129,10 +119,6 @@ class MainActivity : ServiceActivity() {
         }
     }
 
-    private fun displayName(uri: Uri): String? =
-        contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { c ->
-            if (c.moveToFirst()) c.getString(0) else null
-        }
 
     override fun refresh() {
         val s = service ?: run {
@@ -384,7 +370,7 @@ class MainActivity : ServiceActivity() {
     /** The open book's series on the book screen, in reading order. */
     private fun openSeries() {
         val series = service?.speechSeries ?: return
-        startActivity(Intent(this, BooksActivity::class.java).putExtra(BooksActivity.EXTRA_SERIES, series))
+        go(Tab.LIBRARY) { putExtra(BooksActivity.EXTRA_SERIES, series) }
     }
 
     /** The server's books, on their own screen; without a server, the sign-in. */
@@ -394,7 +380,7 @@ class MainActivity : ServiceActivity() {
             serverDialog()
             return
         }
-        startActivity(Intent(this, BooksActivity::class.java))
+        go(Tab.LIBRARY)
     }
 
     /** One of the tools along the bottom: a small caption over a value. */
@@ -432,6 +418,21 @@ class MainActivity : ServiceActivity() {
         val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         bar = toolbar("underscore", up = false)
         root.addView(bar)
+
+        // The tools along the top.
+        speedTile = tile("Speed") { speedDialog() }
+        sleepTile = tile("Sleep") { sleepMenu(it) }
+        chaptersTile = tile("Chapters") { showChapters() }
+        musicTile = tile("Music") { musicMenu(it) }
+        root.addView(
+            LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                for (t in listOf(speedTile, sleepTile, chaptersTile, musicTile)) {
+                    addView(t.view, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+                }
+            },
+        )
+        root.addView(divider())
 
         val body = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -575,21 +576,6 @@ class MainActivity : ServiceActivity() {
         root.addView(
             ScrollView(this).apply { addView(body) },
             LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f),
-        )
-
-        // The tool bar along the bottom.
-        speedTile = tile("Speed") { speedDialog() }
-        sleepTile = tile("Sleep") { sleepMenu(it) }
-        chaptersTile = tile("Chapters") { showChapters() }
-        musicTile = tile("Music") { musicMenu(it) }
-        root.addView(divider())
-        root.addView(
-            LinearLayout(this).apply {
-                orientation = LinearLayout.HORIZONTAL
-                for (t in listOf(speedTile, sleepTile, chaptersTile, musicTile)) {
-                    addView(t.view, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-                }
-            },
         )
         return root
     }
