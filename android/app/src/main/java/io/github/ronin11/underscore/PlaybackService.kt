@@ -1536,7 +1536,7 @@ class PlaybackService : Service() {
             action(android.R.drawable.ic_media_play, "Play", ACTION_PLAY)
         }
         return NotificationCompat.Builder(this, CHANNEL_ID)
-            .setSmallIcon(R.drawable.ic_launcher)
+            .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle(speechName ?: getString(R.string.notification_title))
             .setContentText(chapter ?: "")
             .setContentIntent(openActivity())
