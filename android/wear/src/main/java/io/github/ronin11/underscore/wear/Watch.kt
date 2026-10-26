@@ -28,6 +28,8 @@ object Watch {
     const val PATH_PING = "/underscore/ping"
     /** Watch to phone: the answer, as lines of text. */
     const val PATH_STATUS = "/underscore/status"
+    /** Watch to phone: the wearer's state changed. Lines of key=value: state, at, source. */
+    const val PATH_STATE = "/underscore/state"
 
     private fun prefs(context: Context) = context.getSharedPreferences("watch", Context.MODE_PRIVATE)
 
@@ -45,10 +47,16 @@ object Watch {
     fun note(context: Context, line: String) {
         val stamped = DateFormat.getTimeInstance(DateFormat.SHORT).format(Date()) + " " + line
         val lines = (prefs(context).getString("log", null)?.lines() ?: emptyList()) + stamped
-        prefs(context).edit().putString("log", lines.takeLast(6).joinToString("\n")).apply()
+        prefs(context).edit().putString("log", lines.takeLast(KEEP).joinToString("\n")).apply()
     }
 
-    fun log(context: Context): String = prefs(context).getString("log", null) ?: "nothing yet"
+    /** The last [last] lines of what happened. */
+    fun log(context: Context, last: Int = SHOW): String =
+        prefs(context).getString("log", null)?.lines()?.takeLast(last)?.joinToString("\n") ?: "nothing yet"
+
+    /** Lines kept: a few nights of state changes. Lines shown on screens. */
+    private const val KEEP = 100
+    private const val SHOW = 6
 
     /**
      * Start or stop listening for sleep. Health Services keeps the listener
@@ -88,6 +96,11 @@ object Watch {
             }
             if (nodes.isEmpty()) note(app, "No phone connected")
         }
+    }
+
+    /** Tell the phone the wearer's state changed, asleep or awake, for its sleep log. */
+    fun sendState(context: Context, state: String, atMs: Long) {
+        send(context, PATH_STATE, "state=$state\nat=$atMs\nsource=${Build.MODEL}")
     }
 
     /** Tell the phone the wearer fell asleep at [sinceMs]. A test does not pause the book. */

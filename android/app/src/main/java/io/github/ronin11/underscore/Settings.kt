@@ -46,6 +46,11 @@ class Settings(context: Context) {
         get() = prefs.getBoolean(SLEEP_AUTO, false)
         set(v) = prefs.edit().putBoolean(SLEEP_AUTO, v).apply()
 
+    /** Shaking the phone undoes an automatic sleep stop, or restarts a manual timer. */
+    var sleepShake: Boolean
+        get() = prefs.getBoolean(SLEEP_SHAKE, true)
+        set(v) = prefs.edit().putBoolean(SLEEP_SHAKE, v).apply()
+
     /** Whether the sleep source with this key has been set up and tested. */
     fun sleepSetUp(key: String): Boolean = prefs.getBoolean(SLEEP_SET_UP_PREFIX + key, false)
 
@@ -87,5 +92,6 @@ class Settings(context: Context) {
         const val SLEEP_PREFIX = "sleep_from_"
         const val SLEEP_SET_UP_PREFIX = "sleep_set_up_"
         const val SLEEP_AUTO = "sleep_auto"
+        const val SLEEP_SHAKE = "sleep_shake"
     }
 }

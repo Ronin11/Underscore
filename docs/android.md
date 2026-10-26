@@ -203,12 +203,30 @@ the book is playing, the service marks where in the book sleep
 began, plays a minute more, fades and pauses. The Sleep button then offers
 "Back to where I fell asleep". The mark is two minutes before the time the
 source gives, or ten minutes back when it gives none, since nothing can
-tell the moment someone drifts off.
+tell the moment someone drifts off. A report while the player is not
+running is only logged: nothing can be playing, and starting the player
+for it would open the last book for nothing.
+
+Shaking the phone undoes a stop that came while the listener was awake.
+During the wind-down it calls the wind-down off; within five minutes of
+the stop it plays the book again. During a manual timer it starts the
+timer over, as in Audible. The phone buzzes once when a shake lands. The
+accelerometer only listens while a shake could do something, and Settings
+can turn it off.
+
+The sleep log keeps what each source said and what came of it, across
+restarts, so a night can be read the next morning. The watch also sends
+every change of state, awake as well as asleep. A shake, a call-off from
+the Sleep menu, or playing again soon after marks a stop as too soon,
+with the source it came from. That is the data for tuning the sources:
+without it there is no telling a stop that came too soon from one that
+came right. The Debug screen shows the latest lines; the bug report has
+all of it, with about a day of the phone's readings.
 
 - **This phone.** Google's sleep API sends a reading every ten minutes,
   from how still the phone is and how dark the room is. Lying still in the
   dark while listening looks a lot like sleep, so it takes two readings in
-  a row at 85 out of 100 or more. The bug report lists the latest readings,
+  a row at 85 out of 100 or more. The bug report lists about a day of readings,
   which is how to tune that. It needs the physical activity permission and
   Google Play services.
 - **Other apps.** Any app can send the broadcast

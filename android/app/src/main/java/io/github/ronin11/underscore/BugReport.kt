@@ -121,6 +121,9 @@ object BugReport {
             line(service.describe())
         }
 
+        section("Sleep log")
+        line(SleepLog.text(context))
+
         val crash = File(context.filesDir, CRASH_FILE)
         if (crash.exists()) {
             section("Last crash")

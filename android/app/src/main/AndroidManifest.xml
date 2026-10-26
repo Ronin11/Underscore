@@ -14,6 +14,8 @@
     <!-- Google's sleep guess on the phone, when that sleep source is on. -->
     <uses-permission android:name="android.permission.ACTIVITY_RECOGNITION" />
     <uses-permission android:name="com.google.android.gms.permission.ACTIVITY_RECOGNITION" />
+    <!-- A short buzz when a shake undoes a sleep stop. -->
+    <uses-permission android:name="android.permission.VIBRATE" />
 
     <application
         android:name=".UnderscoreApp"

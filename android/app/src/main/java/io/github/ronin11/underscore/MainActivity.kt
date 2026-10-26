@@ -310,7 +310,7 @@ class MainActivity : ServiceActivity() {
         }
         for (minutes in intArrayOf(10, 15, 20, 30, 45, 60)) {
             timers.add("$minutes minutes").setOnMenuItemClickListener {
-                timer { e.setSleepMs(minutes * 60_000L, s.now()) }; true
+                timer { s.setSleepTimer(minutes * 60_000L) }; true
             }
         }
         timers.add("End of this chapter").apply {

@@ -28,6 +28,7 @@ class DebugActivity : ServiceActivity() {
     private lateinit var state: TextView
     private lateinit var transcribe: Row
     private lateinit var transcript: TextView
+    private lateinit var sleepLog: TextView
 
     private val pickMusic = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         uri?.let { loadMusic(it) }
@@ -37,6 +38,7 @@ class DebugActivity : ServiceActivity() {
         val s = service ?: return
         music.summary = s.musicName ?: "None. Tap to pick a track to play under the book."
         state.text = s.describe()
+        sleepLog.text = SleepLog.text(this, SLEEP_LOG_LINES)
         val t = s.transcribeStatus()
         transcribe.summary = if (t == null) "Off. Tap to turn on." else transcribeLine(t)
         transcript.text = t?.optJSONArray("near")?.let { near ->
@@ -193,6 +195,23 @@ class DebugActivity : ServiceActivity() {
         list.addView(transcript)
 
         list.addView(divider())
+        list.addView(heading("Sleep log"))
+        list.addView(
+            row(
+                "What the sleep sources said and what came of it, newest last.",
+                "A shake, a call-off from the Sleep menu, or playing again soon after marks a stop that came too soon. The whole log goes in a bug report.",
+                null,
+            ).view,
+        )
+        sleepLog = TextView(this).apply {
+            typeface = Typeface.MONOSPACE
+            textSize = 11f
+            setPadding(dp(16), 0, dp(16), dp(12))
+            setTextIsSelectable(true)
+        }
+        list.addView(sleepLog)
+
+        list.addView(divider())
         list.addView(heading("Report"))
         list.addView(
             Button(this).apply {
@@ -221,5 +240,6 @@ class DebugActivity : ServiceActivity() {
 
     private companion object {
         val AUDIO_TYPES = arrayOf("audio/*", "application/ogg", "video/mp4")
+        const val SLEEP_LOG_LINES = 40
     }
 }

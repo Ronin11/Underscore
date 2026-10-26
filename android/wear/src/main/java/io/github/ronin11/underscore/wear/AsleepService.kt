@@ -8,10 +8,11 @@ import androidx.health.services.client.data.UserActivityState
 class AsleepService : PassiveListenerService() {
     override fun onUserActivityInfoReceived(info: UserActivityInfo) {
         val state = info.userActivityState
+        val at = info.stateChangeTime.toEpochMilli()
         Watch.note(this, "State: ${state.name}")
-        if (state == UserActivityState.USER_ACTIVITY_ASLEEP && Watch.isOn(this)) {
-            Watch.sendAsleep(this, info.stateChangeTime.toEpochMilli(), test = false)
-        }
+        if (!Watch.isOn(this)) return
+        Watch.sendState(this, state.name.removePrefix("USER_ACTIVITY_"), at)
+        if (state == UserActivityState.USER_ACTIVITY_ASLEEP) Watch.sendAsleep(this, at, test = false)
     }
 
     override fun onPermissionLost() {

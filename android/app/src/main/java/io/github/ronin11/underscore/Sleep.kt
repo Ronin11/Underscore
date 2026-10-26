@@ -79,17 +79,55 @@ object Sleep {
 
     /**
      * Tell the player the listener is asleep, and since when, if known.
-     * The player ignores it unless a book is playing, and then the service
-     * is in the foreground, so starting it is allowed.
+     * The player ignores it unless a book is playing. When the player is
+     * not running nothing is playing, so the report is only logged:
+     * starting the player for it would open the last book for nothing.
      */
     fun report(context: Context, sinceWallMs: Long?, source: String) {
+        if (!PlaybackService.alive) {
+            SleepLog.add(context, "${said(source, sinceWallMs)}; player not running, ignored")
+            return
+        }
         val intent = Intent(context, PlaybackService::class.java)
             .setAction(PlaybackService.ACTION_ASLEEP)
             .putExtra(EXTRA_SOURCE, source)
         if (sinceWallMs != null) intent.putExtra(EXTRA_SINCE, sinceWallMs)
-        // Nothing is playing when the service is not running; nothing to do.
         runCatching { context.startService(intent) }
     }
+
+    /** "watch says asleep since 2:09:14 AM", for the log. */
+    fun said(source: String, sinceWallMs: Long?): String =
+        "$source says asleep" + (sinceWallMs?.let { " since ${SleepLog.time(it)}" } ?: "")
+}
+
+/**
+ * What the sleep sources said and what came of it, newest last, kept
+ * across restarts so a night can be read the next morning. It is how the
+ * sources get tuned: a stop the listener shakes off, calls off, or plays
+ * through again soon after was too soon, and the log says which source
+ * it came from.
+ */
+object SleepLog {
+    private const val KEEP = 400
+
+    @Synchronized
+    fun add(context: Context, line: String) {
+        val p = prefs(context)
+        val lines = (p.getString("lines", null)?.lines() ?: emptyList()) + "${stamp(System.currentTimeMillis())}  $line"
+        p.edit().putString("lines", lines.takeLast(KEEP).joinToString("\n")).apply()
+    }
+
+    /** The whole log, or the last [last] lines. */
+    fun text(context: Context, last: Int = KEEP): String =
+        prefs(context).getString("lines", null)?.lines()?.takeLast(last)?.joinToString("\n") ?: "nothing yet"
+
+    /** A wall-clock time of day, such as 2:09:14 AM. */
+    fun time(wallMs: Long): String = java.text.DateFormat.getTimeInstance().format(java.util.Date(wallMs))
+
+    private fun stamp(wallMs: Long): String =
+        java.text.SimpleDateFormat("MMM d HH:mm:ss", java.util.Locale.US).format(java.util.Date(wallMs))
+
+    private fun prefs(context: Context) = context.getSharedPreferences("sleep_log", Context.MODE_PRIVATE)
 }
 
 /**
@@ -115,7 +153,8 @@ object PhoneSleep : SleepSource {
     private const val READINGS_IN_A_ROW = 2
     /** Readings further apart than this are not in a row. */
     private const val GAP_MS = 25 * 60_000L
-    private const val KEEP_READINGS = 12
+    /** About a day of readings, to line up with the log and tune [SURE] by. */
+    private const val KEEP_READINGS = 150
 
     override fun start(context: Context): String? {
         if (ContextCompat.checkSelfPermission(context, permission) != PackageManager.PERMISSION_GRANTED) {
@@ -228,6 +267,8 @@ object WatchSleep : SleepSource {
     const val PATH_ASLEEP = "/underscore/asleep"
     const val PATH_PING = "/underscore/ping"
     const val PATH_STATUS = "/underscore/status"
+    /** Every change of the wearer's state, asleep or not, for the sleep log. */
+    const val PATH_STATE = "/underscore/state"
 
     override fun start(context: Context): String? = null
 
@@ -253,12 +294,18 @@ class WatchListener : com.google.android.gms.wearable.WearableListenerService() 
 
     override fun onMessageReceived(event: com.google.android.gms.wearable.MessageEvent) {
         val text = String(event.data)
+        val fields = text.lines().mapNotNull { line ->
+            line.split('=', limit = 2).takeIf { it.size == 2 }?.let { it[0] to it[1] }
+        }.toMap()
         when (event.path) {
             WatchSleep.PATH_STATUS -> main.post { Sleep.testing?.invoke(WatchSleep, text) }
+            WatchSleep.PATH_STATE -> {
+                // When the watch thinks the wearer woke matters as much as
+                // when it thinks they slept; log both.
+                val at = fields["at"]?.toLongOrNull()?.let { " at ${SleepLog.time(it)}" } ?: ""
+                SleepLog.add(this, "${fields["source"] ?: "the watch"}: ${fields["state"] ?: "?"}$at")
+            }
             WatchSleep.PATH_ASLEEP -> {
-                val fields = text.lines().mapNotNull { line ->
-                    line.split('=', limit = 2).takeIf { it.size == 2 }?.let { it[0] to it[1] }
-                }.toMap()
                 val since = fields["since"]?.toLongOrNull()?.takeIf { it > 0 }
                 val from = fields["source"] ?: "the watch"
                 val test = fields["test"] == "1"

@@ -129,6 +129,14 @@ class PlaybackService : Service() {
     private var downloading = false
     private var downloadFailed = false
     private var lastSaveMs = 0L
+    /** The sleep source winding the book down right now, or null. */
+    private var windingDownFor: String? = null
+    /** Who last stopped the book for sleep, and when, by [now]; for shake and the log. */
+    private var stoppedFor: String? = null
+    private var stoppedAtMs = 0L
+    /** The last manual timer's length, which a shake starts over. */
+    private var manualSleepMs = 0L
+    private val shake by lazy { Shake(this) { shaken() } }
 
     /**
      * One book on the server, as the book list shows it. [progress] runs
@@ -205,12 +213,14 @@ class PlaybackService : Service() {
             if (engine.isPlaying && now() - lastSaveMs > SAVE_EVERY_MS) savePosition()
             if (transcribing) engine.transcribePosition(engine.positionMs)
             if (downloading) checkDownload()
+            watchSleep()
             mainHandler.postDelayed(this, 1000)
         }
     }
 
     override fun onCreate() {
         super.onCreate()
+        alive = true
         engine = Engine(SAMPLE_RATE, CHANNELS)
         settings = Settings(this)
         settings.applyTo(engine)
@@ -251,6 +261,8 @@ class PlaybackService : Service() {
     }
 
     override fun onDestroy() {
+        alive = false
+        shake.listen(false)
         savePosition()
         mainHandler.removeCallbacks(stateTick)
         settingsListener?.let { settings.unlisten(it) }
@@ -271,6 +283,11 @@ class PlaybackService : Service() {
     /** Start or resume. Does nothing if another app refuses to give up audio focus. */
     fun play() {
         if (!requestFocus()) return
+        stoppedFor?.let { by ->
+            // Played again soon after a sleep stop: maybe it came too soon.
+            SleepLog.add(this, "played again ${(now() - stoppedAtMs) / 60_000} min after the stop for $by")
+            stoppedFor = null
+        }
         engine.play(now())
         session.isActive = true
         publishState()
@@ -723,10 +740,6 @@ class PlaybackService : Service() {
     /** Where in the open book the listener probably fell asleep, or -1. */
     val dozedAtMs: Long get() = last.getLong("dozedAtMs", -1)
 
-    /** The last sleep report and what came of it, for the bug report. */
-    @Volatile var lastAsleep: String? = null
-        private set
-
     /** Start and stop the sleep sources to match the settings. */
     fun applySleepSources(): Map<String, String> = Sleep.apply(this, settings)
 
@@ -738,9 +751,9 @@ class PlaybackService : Service() {
      */
     private fun asleep(sinceWallMs: Long?, source: String) {
         val wall = System.currentTimeMillis()
-        val heard = "$source at ${java.util.Date(wall)}" + (sinceWallMs?.let { ", asleep since ${java.util.Date(it)}" } ?: "")
+        val heard = Sleep.said(source, sinceWallMs)
         if (!engine.isPlaying) {
-            lastAsleep = "$heard; not playing, ignored"
+            SleepLog.add(this, "$heard; not playing, ignored")
             return
         }
         // Book time runs at the playback speed.
@@ -748,8 +761,88 @@ class PlaybackService : Service() {
         val at = (engine.positionMs - slept - ASLEEP_MARGIN_MS).coerceAtLeast(0)
         last.edit().putLong("dozedAtMs", at).apply()
         engine.setSleepMs(ASLEEP_WIND_DOWN_MS, now())
-        lastAsleep = "$heard; marked $at ms, winding down"
+        windingDownFor = source
+        SleepLog.add(this, "$heard; playing at ${clock(engine.positionMs)}, marked ${clock(at)}, winding down")
         publishState()
+    }
+
+    /** A manual sleep timer of [ms]; a shake while it runs starts it over. */
+    fun setSleepTimer(ms: Long) {
+        manualSleepMs = ms
+        engine.setSleepMs(ms, now())
+    }
+
+    /**
+     * Once a second: see how a wind-down ended, and listen for a shake
+     * only while one could do something.
+     */
+    private fun watchSleep() {
+        windingDownFor?.let { by ->
+            val left = engine.sleepRemainingMs(now())
+            when {
+                // The timer fired.
+                !engine.isPlaying && left < 0 -> {
+                    windingDownFor = null
+                    stoppedFor = by
+                    stoppedAtMs = now()
+                    SleepLog.add(this, "stopped at ${clock(engine.positionMs)} for $by")
+                    // The engine paused itself, so pause() did not run.
+                    syncServer()
+                    savePosition()
+                }
+                // Paused by hand. Clear the timer, or it would fire on the next play.
+                !engine.isPlaying -> {
+                    windingDownFor = null
+                    engine.setSleepMs(0, now())
+                    SleepLog.add(this, "paused by hand while winding down for $by")
+                }
+                // Turned off, or a timer set, from the Sleep menu.
+                left < 0 || left > ASLEEP_WIND_DOWN_MS -> {
+                    windingDownFor = null
+                    SleepLog.add(this, "wind-down for $by called off from the Sleep menu: too soon")
+                }
+            }
+        }
+        if (stoppedFor != null && now() - stoppedAtMs > SHAKE_AFTER_STOP_MS) {
+            SleepLog.add(this, "still stopped ${SHAKE_AFTER_STOP_MS / 60_000} min later")
+            stoppedFor = null
+        }
+        val manual = engine.isPlaying && manualSleepMs > 0 && engine.sleepRemainingMs(now()) >= 0
+        shake.listen(settings.sleepShake && (windingDownFor != null || stoppedFor != null || manual))
+    }
+
+    /**
+     * The phone was shaken. During a wind-down, or soon after a sleep stop,
+     * the listener is awake: undo it and log it as too soon. During a
+     * manual timer, start the timer over.
+     */
+    private fun shaken() {
+        val winding = windingDownFor
+        val stopped = stoppedFor
+        when {
+            winding != null && engine.isPlaying -> {
+                windingDownFor = null
+                engine.setSleepMs(0, now())
+                last.edit().remove("dozedAtMs").apply()
+                SleepLog.add(this, "shaken while winding down for $winding: too soon")
+            }
+            stopped != null && !engine.isPlaying -> {
+                stoppedFor = null
+                last.edit().remove("dozedAtMs").apply()
+                SleepLog.add(this, "shaken ${(now() - stoppedAtMs) / 1000} s after the stop for $stopped: too soon, playing again")
+                play()
+            }
+            engine.isPlaying && manualSleepMs > 0 && engine.sleepRemainingMs(now()) >= 0 -> {
+                engine.setSleepMs(manualSleepMs, now())
+            }
+        }
+        publishState()
+    }
+
+    /** A book position as h:mm:ss, for the sleep log. */
+    private fun clock(ms: Long): String {
+        val s = ms / 1000
+        return "%d:%02d:%02d".format(s / 3600, s / 60 % 60, s % 60)
     }
 
     /** Back to where the listener fell asleep, and forget the mark. */
@@ -757,6 +850,7 @@ class PlaybackService : Service() {
         val at = dozedAtMs
         if (at < 0) return
         last.edit().remove("dozedAtMs").apply()
+        SleepLog.add(this, "went back to the mark at ${clock(at)} from ${clock(engine.positionMs)}")
         seekMs(at)
     }
 
@@ -1016,7 +1110,8 @@ class PlaybackService : Service() {
             appendLine("server: ${serverUrl ?: "none"}, signed in ${engine.hasServer}, busy ${serverBusy ?: "no"}")
             appendLine("session: active ${session.isActive}")
             appendLine("beside the book on the server: ${companions ?: "not asked"}")
-            appendLine("sleep: auto ${settings.sleepAuto}, listening ${Sleep.sources.filter { Sleep.listening(settings, it) }.joinToString { it.key }.ifEmpty { "none" }}, last ${lastAsleep ?: "none"}, dozed at $dozedAtMs")
+            appendLine("sleep: auto ${settings.sleepAuto}, listening ${Sleep.sources.filter { Sleep.listening(settings, it) }.joinToString { it.key }.ifEmpty { "none" }}, shake ${settings.sleepShake}, dozed at $dozedAtMs, winding down for ${windingDownFor ?: "none"}, stopped for ${stoppedFor ?: "none"}")
+            appendLine("sleep log, latest:\n${SleepLog.text(this@PlaybackService, 20)}")
             appendLine("sleep: phone readings:\n${PhoneSleep.readings(this@PlaybackService)}")
             if (state == null) {
                 appendLine("playback state: none")
@@ -1238,6 +1333,11 @@ class PlaybackService : Service() {
         private const val ASLEEP_MARGIN_MS = 2 * 60_000L
         /** Play this much more, fading at the end, then pause. */
         private const val ASLEEP_WIND_DOWN_MS = 60_000L
+        /** A shake this soon after a sleep stop plays the book again. */
+        private const val SHAKE_AFTER_STOP_MS = 5 * 60_000L
+        /** True while the service runs, so sleep reports know whether anything could be playing. */
+        @Volatile var alive = false
+            private set
         private const val SAVE_EVERY_MS = 15_000L
         /** Kept beside a book on the server: its music map, and a finished transcript. */
         const val SERVER_MAP = "underscore.toml"

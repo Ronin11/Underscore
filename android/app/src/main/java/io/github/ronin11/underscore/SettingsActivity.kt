@@ -30,6 +30,7 @@ class SettingsActivity : ServiceActivity() {
     private lateinit var skipForward: Row
     private lateinit var rewind: SwitchCompat
     private lateinit var keepScreen: SwitchCompat
+    private lateinit var shake: SwitchCompat
     private lateinit var musicLevel: SeekBar
     private lateinit var musicLevelValue: TextView
     private lateinit var musicFolder: Row
@@ -51,6 +52,7 @@ class SettingsActivity : ServiceActivity() {
         skipForward.summary = "${settings.skipForwardSec} seconds"
         if (!rewind.isPressed) rewind.isChecked = settings.rewindOnResume
         if (!keepScreen.isPressed) keepScreen.isChecked = settings.keepScreenOn
+        if (!shake.isPressed) shake.isChecked = settings.sleepShake
         if (!musicLevel.isPressed) musicLevel.progress = settings.musicLevel
         musicLevelValue.text = "${settings.musicLevel}%"
         musicFolder.summary = settings.musicDir ?: "Not set. Used when no music server is signed in."
@@ -258,6 +260,12 @@ class SettingsActivity : ServiceActivity() {
         ) { settings.keepScreenOn = it }
         keepScreen = keepSwitch
         list.addView(keepRow)
+        val (shakeRow, shakeSwitch) = switchRow(
+            "Shake to undo sleep",
+            "Shake the phone when Auto winds the book down while you are awake, or within 5 minutes of it stopping. During a timer, a shake starts it over.",
+        ) { settings.sleepShake = it }
+        shake = shakeSwitch
+        list.addView(shakeRow)
 
         list.addView(divider())
         list.addView(heading("Music"))
