@@ -57,6 +57,25 @@ for Python, and the worker never runs on a listener's device or touches
 the mix. It reads files to analyse them. What it writes is a map, which
 is data.
 
+## Who says what
+
+For subtitles, the worker also works out who speaks each part of each
+line: the voices file. The transcript has no quotation marks, so the
+local model reads each chapter, thirty lines at a time with a few lines
+before for context, and splits every line into spans of the exact text,
+each with a speaker: `narrator` for narration, thoughts, and speech tags,
+or a character id from the book's cast. Spans that do not add up to their
+line are not trusted, and the line goes whole to whoever said most of it,
+so a wrong answer can mislabel a line but never garble it.
+
+It is slow and imperfect. With reasoning on, about two and a half seconds
+a line on a 3090, so a long book takes a night. It gets most dialogue
+right and sometimes gives a narrator's aside to a character. Without
+reasoning it was much worse. A map job does voices after the whole map
+is sent, so it never holds the music back. A book with a map already
+gets voices with `POST /api/books/{book}/voices/build`. The format is in
+`worker/underscore_worker/voices.py`.
+
 ## The three rules
 
 - **Nothing is mixed or written.** The worker decodes audio only to

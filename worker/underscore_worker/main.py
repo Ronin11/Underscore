@@ -13,6 +13,7 @@ from .music import Clap, Index
 from .scenes import Scenes
 from .servers import Audiobookshelf, MapServer, Subsonic
 from .transcribe import Transcriber, Transcript
+from .voices import Voices
 
 IDLE = 30
 REINDEX = 6 * 3600
@@ -77,16 +78,23 @@ class Worker:
         chapters = compose.chapters_of(book)
         say(f"Reading {book.title}", total=len(chapters))
 
-        self.reindex()
-        if not len(self.index.songs):
-            raise RuntimeError("the music index is empty: no songs on the music server, or none readable")
-        everything = self.sub.songs()
-
         work = self.cfg.data / "jobs" / book.id
         transcript_path = work / "transcript.json"
         given = self.abs.beside(book, TRANSCRIPT_BESIDE) if not transcript_path.is_file() else None
         transcript = (Transcript.adopt(transcript_path, book, given) if given
                       else Transcript(transcript_path, book, self.cfg.whisper_model))
+        voices_path = work / "voices.json"
+        voices = Voices(self.cfg.ollama_url, self.cfg.ollama_model, book.title,
+                        json.loads(voices_path.read_text()) if voices_path.is_file() else None)
+
+        if job.get("kind") == "voices":
+            self.voices_only(job, book, chapters, transcript, voices, voices_path)
+            return
+
+        self.reindex()
+        if not len(self.index.songs):
+            raise RuntimeError("the music index is empty: no songs on the music server, or none readable")
+        everything = self.sub.songs()
 
         # Chapters already done for this map, from before a restart.
         state_path = work / f"{map_id}.json"
@@ -139,9 +147,63 @@ class Worker:
                 wanted = back["chapter"]
                 todo = compose.order(len(chapters), wanted, set(by_chapter))
 
+        # The map is whole; who says what comes after, so it never holds
+        # the music back.
+        for i, ch in enumerate(chapters):
+            if voices.has(i):
+                continue
+            label = f"chapter {ch['number']}" if ch["number"] else compose.clock(ch["start"])
+            say(f"Map done. Listening for voices in {label}")
+            ch["segments"] = transcript.segments(i)
+            self.hear_voices(book, i, ch, voices, voices_path)
+
         self.maps.progress(jid, state="done", message="Done")
         self.abs.forget(book)
         log(f"job {jid}: done")
+
+
+    def hear_voices(self, book, i: int, ch: dict, voices: Voices, path) -> None:
+        """Who says what in chapter `i`, kept and sent. A failure here costs
+        only the voices, never the map."""
+        if voices.has(i):
+            return
+        try:
+            voices.chapter(i, ch["segments"])
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps(voices.data))
+            self.maps.put_voices(book.id, voices.data)
+        except Exception as e:
+            log(f"voices: {e}")
+
+    def voices_only(self, job: dict, book, chapters: list, transcript: Transcript, voices: Voices, path) -> None:
+        """A voices job: transcribe what is missing, then work out who says
+        what, chapter by chapter from the listener's."""
+        jid = job["id"]
+        numbers = lambda: sorted(k + 1 for k in voices.by_index)
+        wanted = job["chapter"]
+        todo = compose.order(len(chapters), wanted, set(voices.by_index))
+        while todo:
+            i = todo.pop(0)
+            ch = chapters[i]
+            label = f"chapter {ch['number']}" if ch["number"] else compose.clock(ch["start"])
+            if not transcript.has(i):
+                self.maps.progress(jid, message=f"Transcribing {label}", done=numbers(), total=len(chapters))
+                segs = self.whisper.chapter(self.abs, book, ch["start"], ch["end"])
+                transcript.put(i, ch["title"], ch["start"], ch["end"], segs)
+            ch["segments"] = transcript.segments(i)
+            self.maps.progress(jid, message=f"Listening for voices in {label}", done=numbers(), total=len(chapters))
+            self.hear_voices(book, i, ch, voices, path)
+            back = self.maps.progress(jid, message=f"Finished {label}", done=numbers(), total=len(chapters))
+            if back.get("chapter") != wanted:
+                wanted = back["chapter"]
+                todo = compose.order(len(chapters), wanted, set(voices.by_index))
+        try:
+            self.maps.put_transcript(book.id, transcript.data)
+        except Exception as e:
+            log(f"transcript: {e}")
+        self.maps.progress(jid, state="done", message="Done")
+        self.abs.forget(book)
+        log(f"job {jid}: voices done")
 
 
 def main() -> None:

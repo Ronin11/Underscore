@@ -31,6 +31,10 @@ class MapServer:
             raise RuntimeError(f"map server: {r.status_code} {r.text}")
         return r.json()
 
+    def put_voices(self, book: str, voices: dict) -> None:
+        r = self.s.put(f"{self.url}/api/worker/books/{book}/voices", json=voices, timeout=TIMEOUT)
+        r.raise_for_status()
+
     def put_transcript(self, book: str, transcript: dict) -> None:
         r = self.s.put(f"{self.url}/api/worker/books/{book}/transcript", json=transcript, timeout=TIMEOUT)
         r.raise_for_status()

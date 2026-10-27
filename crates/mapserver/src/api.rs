@@ -12,10 +12,13 @@
 //! PUT  /api/books/{book}/default       {"map": id}
 //! POST /api/books/{book}/build         {"chapter": n}: make a map, from there
 //! GET  /api/books/{book}/transcript    the worker's transcript of the book
+//! GET  /api/books/{book}/voices        who says what: spans of the transcript by speaker
+//! POST /api/books/{book}/voices/build  {"chapter": n}: work out who says what, from there
 //! GET  /api/maps/{id}                  the map, as TOML
 //! POST /api/worker/claim               the next job, or 204
 //! POST /api/worker/jobs/{job}          progress, the map so far, or the end
 //! PUT  /api/worker/books/{book}/transcript  the transcript, as the phone imports it
+//! PUT  /api/worker/books/{book}/voices      who says what
 //! ```
 
 use serde::Deserialize;
@@ -50,6 +53,18 @@ impl Reply {
 
     fn error(status: u16, message: &str) -> Self {
         Self::json(status, &serde_json::json!({ "error": message }))
+    }
+
+    /// A stored file as it is, or why there is none.
+    fn file(r: Result<String, Error>, content_type: &'static str) -> Self {
+        match r {
+            Ok(body) => Self {
+                status: 200,
+                content_type,
+                body,
+            },
+            Err(e) => Self::of(&e),
+        }
     }
 
     fn of(e: &Error) -> Self {
@@ -109,6 +124,10 @@ pub fn handle(
                 },
                 Err(e) => Reply::of(&e),
             },
+            ("PUT", ["books", book, "voices"]) => match store.set_voices(book, body) {
+                Ok(()) => Reply::json(200, &serde_json::json!({ "ok": true })),
+                Err(e) => Reply::of(&e),
+            },
             ("PUT", ["books", book, "transcript"]) => match store.set_transcript(book, body) {
                 Ok(()) => Reply::json(200, &serde_json::json!({ "ok": true })),
                 Err(e) => Reply::of(&e),
@@ -148,22 +167,18 @@ pub fn handle(
                 Err(e) => Reply::of(&e),
             }
         }
-        ("GET", ["books", book, "transcript"]) => match store.transcript(book) {
-            Ok(json) => Reply {
-                status: 200,
-                content_type: "application/json",
-                body: json,
-            },
-            Err(e) => Reply::of(&e),
-        },
-        ("GET", ["maps", id]) => match store.map(id) {
-            Ok(text) => Reply {
-                status: 200,
-                content_type: "application/toml",
-                body: text,
-            },
-            Err(e) => Reply::of(&e),
-        },
+        ("GET", ["books", book, "voices"]) => Reply::file(store.voices(book), "application/json"),
+        ("POST", ["books", book, "voices", "build"]) => {
+            let chapter = serde_json::from_str::<Build>(body).map_or(1, |b| b.chapter);
+            match store.build_voices(book, chapter) {
+                Ok(job) => Reply::json(200, &serde_json::json!(job)),
+                Err(e) => Reply::of(&e),
+            }
+        }
+        ("GET", ["books", book, "transcript"]) => {
+            Reply::file(store.transcript(book), "application/json")
+        }
+        ("GET", ["maps", id]) => Reply::file(store.map(id), "application/toml"),
         _ => Reply::error(404, "no such route"),
     }
 }

@@ -43,13 +43,26 @@ pub enum State {
     Failed,
 }
 
-/// A map being built for a book.
+/// What a job makes.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Kind {
+    /// A music map. Voices come along with it.
+    #[default]
+    Map,
+    /// Only who says what, for a book that has its map already.
+    Voices,
+}
+
+/// Something being made for a book.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Job {
     pub id: String,
     /// The Audiobookshelf item id.
     pub book: String,
-    /// The id the map gets, chosen when the job is made.
+    #[serde(default)]
+    pub kind: Kind,
+    /// The id the map gets, chosen when the job is made. Empty for voices.
     pub map: String,
     pub state: State,
     /// The chapter the listener is in, from 1. The worker starts there.
@@ -194,6 +207,37 @@ impl Store {
         Ok(())
     }
 
+    fn voices_path(&self, book: &str) -> PathBuf {
+        self.dir.join("voices").join(format!("{book}.json"))
+    }
+
+    /// Who says what in `book`: the transcript's lines split into spans,
+    /// each with a speaker, and the cast. See `docs/map-server.md`.
+    ///
+    /// # Errors
+    /// There is none yet.
+    pub fn voices(&self, book: &str) -> Result<String, Error> {
+        check_id(book)?;
+        fs::read_to_string(self.voices_path(book))
+            .map_err(|_| Error::NotFound(format!("no voices for {book}")))
+    }
+
+    /// Keep who says what for `book`, replacing the last.
+    ///
+    /// # Errors
+    /// It is not JSON, or could not be written.
+    pub fn set_voices(&self, book: &str, json: &str) -> Result<(), Error> {
+        check_id(book)?;
+        serde_json::from_str::<serde_json::Value>(json)
+            .map_err(|e| Error::Invalid(format!("not JSON: {e}")))?;
+        fs::create_dir_all(self.dir.join("voices"))?;
+        let path = self.voices_path(book);
+        let tmp = path.with_extension("json.tmp");
+        fs::write(&tmp, json)?;
+        fs::rename(&tmp, path)?;
+        Ok(())
+    }
+
     /// A map's text.
     ///
     /// # Errors
@@ -228,9 +272,25 @@ impl Store {
         let data = self.lock();
         let entry = data.books.get(book).cloned().unwrap_or_default();
         let maps: Vec<MapInfo> = entry.maps.iter().filter_map(|id| self.info(id)).collect();
-        // The newest job: the one building, or the last to finish or fail.
-        let job = data.jobs.iter().rev().find(|j| j.book == book);
-        serde_json::json!({ "default": entry.default, "maps": maps, "job": job })
+        // The newest job of each kind: the one working, or the last to finish or fail.
+        let newest = |kind| {
+            data.jobs
+                .iter()
+                .rev()
+                .find(|j| j.book == book && j.kind == kind)
+        };
+        let voices = fs::metadata(self.voices_path(book))
+            .and_then(|m| m.modified())
+            .ok()
+            .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+            .map(|d| d.as_secs());
+        serde_json::json!({
+            "default": entry.default,
+            "maps": maps,
+            "job": newest(Kind::Map),
+            "voices": voices,
+            "voices_job": newest(Kind::Voices),
+        })
     }
 
     /// Choose the map a book opens with.
@@ -291,9 +351,26 @@ impl Store {
     /// # Errors
     /// The state could not be saved.
     pub fn build(&self, book: &str, chapter: u32) -> Result<Job, Error> {
+        self.make(book, chapter, Kind::Map)
+    }
+
+    /// Ask for who says what in `book`, starting at `chapter`, for a book
+    /// whose map is already made.
+    ///
+    /// # Errors
+    /// The state could not be saved.
+    pub fn build_voices(&self, book: &str, chapter: u32) -> Result<Job, Error> {
+        self.make(book, chapter, Kind::Voices)
+    }
+
+    fn make(&self, book: &str, chapter: u32, kind: Kind) -> Result<Job, Error> {
         let mut data = self.lock();
         let now = now();
-        if let Some(job) = data.jobs.iter_mut().find(|j| j.book == book && j.active()) {
+        if let Some(job) = data
+            .jobs
+            .iter_mut()
+            .find(|j| j.book == book && j.kind == kind && j.active())
+        {
             job.chapter = chapter.max(1);
             let job = job.clone();
             self.save(&data)?;
@@ -302,7 +379,12 @@ impl Store {
         let job = Job {
             id: new_id()?,
             book: book.to_string(),
-            map: new_id()?,
+            kind,
+            map: if kind == Kind::Map {
+                new_id()?
+            } else {
+                String::new()
+            },
             state: State::Queued,
             chapter: chapter.max(1),
             done: Vec::new(),
@@ -376,6 +458,9 @@ impl Store {
             .iter_mut()
             .find(|j| j.id == job)
             .ok_or_else(|| Error::NotFound(format!("no job {job}")))?;
+        if parsed.is_some() && j.kind != Kind::Map {
+            return Err(Error::Invalid("this job makes no map".into()));
+        }
         if let Some(map) = &parsed
             && map.id.as_deref() != Some(j.map.as_str())
         {
@@ -562,6 +647,33 @@ mod tests {
         assert!(s.set_transcript("b1", "not json").is_err());
         s.set_transcript("b1", r#"{"chapters": []}"#).unwrap();
         assert_eq!(s.transcript("b1").unwrap(), r#"{"chapters": []}"#);
+        fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn voices_jobs_stand_apart_from_map_jobs() {
+        let (s, dir) = store();
+        let map = s.build("b1", 1).unwrap();
+        let voices = s.build_voices("b1", 1).unwrap();
+        assert_ne!(map.id, voices.id, "one of each kind may run at once");
+        assert_eq!(voices.kind, Kind::Voices);
+        assert!(voices.map.is_empty());
+        let book = s.book("b1");
+        assert_eq!(book["job"]["id"], map.id.as_str());
+        assert_eq!(book["voices_job"]["id"], voices.id.as_str());
+        assert!(book["voices"].is_null());
+        let news = Progress {
+            map: Some(MAP.into()),
+            ..Progress::default()
+        };
+        assert!(
+            s.progress(&voices.id, &news).is_err(),
+            "a voices job sends no map"
+        );
+        s.set_voices("b1", r#"{"cast": [], "chapters": []}"#)
+            .unwrap();
+        assert!(s.book("b1")["voices"].is_u64());
+        assert!(s.voices("b1").unwrap().contains("cast"));
         fs::remove_dir_all(dir).ok();
     }
 
