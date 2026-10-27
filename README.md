@@ -58,7 +58,8 @@ worker/         the map worker (Python): transcript, scenes, and music by sound,
                 the listener's own GPU.
 deploy/         how to run the map server and the worker.
 docs/           architecture.md (design), legal.md (why the rules are the rules),
-                music-map.md (the map format), map-server.md (how maps get made)
+                music-map.md (the map format), map-server.md (how maps get made),
+                ios-port.md (a plan for an iPhone app)
 ```
 
 Everything is Rust except the map worker, which runs speech and music
