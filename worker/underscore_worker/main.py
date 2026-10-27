@@ -171,6 +171,9 @@ class Worker:
             say(f"Map done. Listening for voices in {label}")
             ch["segments"] = transcript.segments(i)
             self.hear_voices(book, i, ch, voices, voices_path)
+        if len(voices.by_index) == len(chapters):
+            say("Map done. Settling who is who")
+            self.settle_cast(book, voices, voices_path)
 
         self.maps.progress(jid, state="done", message="Done")
         self.abs.forget(book)
@@ -189,6 +192,16 @@ class Worker:
             self.maps.put_voices(book.id, voices.data)
         except Exception as e:
             log(f"voices: {e}")
+
+    def settle_cast(self, book, voices: Voices, path) -> None:
+        """Once every chapter has voices: one id and one name per person."""
+        try:
+            moved = voices.settle_cast()
+            log(f"voices: cast settled, {len(voices.data['cast'])} speakers, merged {moved}")
+            path.write_text(json.dumps(voices.data))
+            self.maps.put_voices(book.id, voices.data)
+        except Exception as e:
+            log(f"voices: settling the cast: {e}")
 
     def voices_only(self, job: dict, book, chapters: list, transcript: Transcript, voices: Voices, path) -> None:
         """A voices job: transcribe what is missing, then work out who says
@@ -216,6 +229,8 @@ class Worker:
             self.maps.put_transcript(book.id, transcript.data)
         except Exception as e:
             log(f"transcript: {e}")
+        self.maps.progress(jid, message="Settling who is who", done=numbers(), total=len(chapters))
+        self.settle_cast(book, voices, path)
         self.maps.progress(jid, state="done", message="Done")
         self.abs.forget(book)
         log(f"job {jid}: voices done")

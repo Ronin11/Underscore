@@ -82,6 +82,56 @@ SCHEMA = {
 }
 
 
+OTHER = "other"
+OTHER_NAME = "Other voices"
+# Lines of each speaker shown when settling the cast.
+SAMPLES = 3
+
+CAST_PROMPT = """These are the speakers found, chapter by chapter, in the audiobook "{title}", each with an id, the name it was given, how many words it says, and a few of its lines. The same person often appears under more than one id: a first name in one chapter and a surname in another, a title, or a misspelling. A narrator who is also a character may appear as that character.
+
+Group the ids that are the same person. Give each person one id, reusing the id of theirs that says the most, and their best full name as the book would print it. Speakers who are no one in particular, such as "someone", "voice", or "a woman", go together under the id "other" with the name "Other voices". List every id exactly once, in one group.
+
+Speakers:
+{rows}"""
+
+CAST_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "people": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "id": {"type": "string"},
+                    "name": {"type": "string"},
+                    "ids": {"type": "array", "items": {"type": "string"}},
+                },
+                "required": ["id", "name", "ids"],
+            },
+        }
+    },
+    "required": ["people"],
+}
+
+
+def settle_people(people: list[dict], known: set) -> dict:
+    """The model's grouping as old id to new, checked: only known ids move,
+    each at most once, and a group's id is one of its own or "other". An
+    id left out keeps itself."""
+    moves = {}
+    for p in people:
+        target = _id(p.get("id") or "")
+        members = [_id(i) for i in p.get("ids") or [] if _id(i) in known]
+        if not members:
+            continue
+        if target not in members and target != OTHER:
+            # A new id would lose the name the lines were known by; use the group's own.
+            target = members[0]
+        for m in members:
+            moves.setdefault(m, target)
+    return moves
+
+
 def _norm(s: str) -> str:
     return "".join(c for c in s.lower() if c.isalnum())
 
@@ -154,13 +204,17 @@ class Voices:
         cast = "\n".join(f"- {c['id']}: {c['name']}" for c in self.data["cast"]) or "(none yet)"
         lines = "\n".join(f"{i}: {g['text']}" for i, g in enumerate(part, 1))
         context = " ".join(g["text"] for g in before) or "(the start of the chapter)"
+        # A stretch the model cannot answer stays the narrator's; the rest goes on.
+        return self._chat(PROMPT.format(title=self.title, cast=cast, before=context, lines=lines), SCHEMA)
+
+    def _chat(self, prompt: str, schema: dict) -> dict:
         try:
             r = requests.post(
                 f"{self.url}/api/chat",
                 json={
                     "model": self.model,
-                    "messages": [{"role": "user", "content": PROMPT.format(title=self.title, cast=cast, before=context, lines=lines)}],
-                    "format": SCHEMA,
+                    "messages": [{"role": "user", "content": prompt}],
+                    "format": schema,
                     "stream": False,
                     "think": True,
                     "options": {"temperature": 0.1, "num_ctx": 24576},
@@ -170,5 +224,65 @@ class Voices:
             r.raise_for_status()
             return json.loads(r.json()["message"]["content"])
         except (requests.RequestException, ValueError, KeyError):
-            # This stretch stays the narrator's; the rest goes on.
             return {}
+
+    def words(self) -> dict:
+        """Words each speaker says, across the book."""
+        out = {}
+        for ch in self.data["chapters"]:
+            for line in ch["lines"]:
+                for sp in line["spans"]:
+                    out[sp["who"]] = out.get(sp["who"], 0) + len(sp["text"].split())
+        return out
+
+    def settle_cast(self) -> dict:
+        """Once the book is done: one id and one name per person. The model
+        sees every speaker with how much they say and a few of their lines,
+        and groups the ids that are the same person, such as a first name in
+        one chapter and a surname in another. Speakers who are no one in
+        particular join "other". Then every line is relabelled, and the cast
+        is ordered by how much each says, so the main voices get the first
+        colors. Returns the ids that changed, old to new."""
+        words = self.words()
+        samples = {}
+        for ch in self.data["chapters"]:
+            for line in ch["lines"]:
+                for sp in line["spans"]:
+                    got = samples.setdefault(sp["who"], [])
+                    if len(got) < SAMPLES and len(sp["text"]) > 12:
+                        got.append(sp["text"][:90])
+        names = {c["id"]: c["name"] for c in self.data["cast"]}
+        speakers = [cid for cid in names if words.get(cid)]
+        if len(speakers) < 2:
+            return {}
+        rows = "\n".join(
+            f"- {cid} ({names[cid]}), {words[cid]} words: " + " / ".join(f'"{t}"' for t in samples.get(cid, []))
+            for cid in sorted(speakers, key=lambda c: -words[c])
+        )
+        answer = self._chat(CAST_PROMPT.format(title=self.title, rows=rows), CAST_SCHEMA)
+        moves = settle_people(answer.get("people") or [], set(speakers))
+        if not moves and not answer.get("people"):
+            return {}
+        people = {p["id"]: p["name"] for p in answer.get("people") or [] if p.get("id") in moves.values()}
+        for ch in self.data["chapters"]:
+            for line in ch["lines"]:
+                for sp in line["spans"]:
+                    sp["who"] = moves.get(sp["who"], sp["who"])
+                # Neighbours that are now the same speaker read as one span.
+                merged = []
+                for sp in line["spans"]:
+                    if merged and merged[-1]["who"] == sp["who"]:
+                        merged[-1]["text"] = (merged[-1]["text"] + " " + sp["text"]).strip()
+                    else:
+                        merged.append(sp)
+                line["spans"] = merged
+        after = self.words()
+        cast = {}
+        for cid, name in names.items():
+            target = moves.get(cid, cid)
+            if target == NARRATOR or not after.get(target):
+                continue
+            cast[target] = people.get(target) or cast.get(target) or (OTHER_NAME if target == OTHER else name)
+        self.data["cast"] = [{"id": cid, "name": cast[cid]} for cid in sorted(cast, key=lambda c: -after[c])]
+        self.data["cast_settled"] = True
+        return {old: new for old, new in moves.items() if old != new}

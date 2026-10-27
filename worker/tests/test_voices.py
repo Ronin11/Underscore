@@ -1,4 +1,5 @@
 """Checking the model's answer about who says what. No model needed."""
+import json
 import sys
 import unittest
 from pathlib import Path
@@ -56,3 +57,51 @@ class Chapter(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SettleCast(unittest.TestCase):
+    def book(self):
+        v = Voices("http://unused", "m", "Book")
+        v.data = {"version": 1, "cast": [
+            {"id": "eva", "name": "Eva Stratt"}, {"id": "strat", "name": "Strat"},
+            {"id": "ryland", "name": "Ryland Grace"}, {"id": "someone", "name": "someone"},
+            {"id": "ghost", "name": "Ghost"},
+        ], "chapters": [{"index": 0, "lines": [
+            {"start": 0, "end": 1, "spans": [{"who": "strat", "text": "You will do it."}, {"who": "eva", "text": "Now."}]},
+            {"start": 1, "end": 2, "spans": [{"who": "ryland", "text": "No, I will not, not ever, never."}]},
+            {"start": 2, "end": 3, "spans": [{"who": "someone", "text": "Hey."}, {"who": "narrator", "text": "a voice called."}]},
+            {"start": 3, "end": 4, "spans": [{"who": "eva", "text": "Yes you will, Grace, today."}]},
+        ]}]}
+        return v
+
+    def test_the_same_person_under_two_ids_becomes_one(self):
+        v = self.book()
+        v._chat = lambda prompt, schema: {"people": [
+            {"id": "eva", "name": "Eva Stratt", "ids": ["eva", "strat"]},
+            {"id": "ryland", "name": "Ryland Grace", "ids": ["ryland"]},
+            {"id": "other", "name": "Other voices", "ids": ["someone"]},
+        ]}
+        moved = v.settle_cast()
+        self.assertEqual(moved, {"strat": "eva", "someone": "other"})
+        lines = v.data["chapters"][0]["lines"]
+        self.assertEqual(lines[0]["spans"], [{"who": "eva", "text": "You will do it. Now."}], "neighbours merge")
+        self.assertEqual(lines[2]["spans"][0]["who"], "other")
+        self.assertEqual([c["id"] for c in v.data["cast"]], ["eva", "ryland", "other"], "by words said; the silent drop out")
+        self.assertEqual(v.data["cast"][2]["name"], "Other voices")
+
+    def test_a_bad_answer_moves_nothing_it_should_not(self):
+        v = self.book()
+        v._chat = lambda prompt, schema: {"people": [
+            {"id": "brand-new", "name": "X", "ids": ["strat", "nobody"]},
+            {"id": "eva", "name": "Eva", "ids": ["strat"]},
+        ]}
+        moved = v.settle_cast()
+        self.assertEqual(moved, {}, "a group with a made-up id keeps its own; a second claim is ignored")
+        self.assertEqual(v.data["chapters"][0]["lines"][1]["spans"][0]["who"], "ryland")
+
+    def test_no_answer_changes_nothing(self):
+        v = self.book()
+        before = json.dumps(v.data)
+        v._chat = lambda prompt, schema: {}
+        self.assertEqual(v.settle_cast(), {})
+        self.assertEqual(json.dumps(v.data), before)

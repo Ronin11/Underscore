@@ -72,7 +72,16 @@ It is slow and imperfect. With reasoning on, about two and a half seconds
 a line on a 3090, so a long book takes a night. It gets most dialogue
 right and sometimes gives a narrator's aside to a character. Without
 reasoning it was much worse. A map job does voices after the whole map
-is sent, so it never holds the music back. A book with a map already
+is sent, so it never holds the music back.
+
+Read a chapter at a time, the same person can get two ids, a first name
+in one chapter and a surname in another. So once every chapter is done,
+one more question settles the cast: the model sees each speaker with how
+much they say and a few of their lines, and groups the ids that are the
+same person under one id and name. Speakers who are no one in particular
+join "Other voices". The cast is then ordered by how much each says, so
+the main voices get the first colors on the phone. Asking for voices
+again on a finished book only settles the cast. A book with a map already
 gets voices with `POST /api/books/{book}/voices/build`. The format is in
 `worker/underscore_worker/voices.py`.
 
