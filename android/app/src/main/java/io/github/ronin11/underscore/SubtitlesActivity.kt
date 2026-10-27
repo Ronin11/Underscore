@@ -13,7 +13,6 @@ import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
-import android.widget.Button
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
@@ -34,11 +33,10 @@ class SubtitlesActivity : ServiceActivity() {
 
     override val tab: Tab? = null
 
-    private lateinit var title: TextView
-    private lateinit var note: TextView
+    private lateinit var bar: androidx.appcompat.widget.Toolbar
     private lateinit var stage: FrameLayout
     private lateinit var column: LinearLayout
-    private lateinit var playButton: Button
+    private lateinit var transport: Transport
 
     /** The lines shown, by their index in the book: [first] to [first] + views - 1. */
     private var first = -1
@@ -67,14 +65,14 @@ class SubtitlesActivity : ServiceActivity() {
 
     override fun refresh() {
         val s = service ?: return
-        title.text = s.speechName ?: "Nothing open"
+        bar.title = s.speechName ?: "Nothing open"
         val sub = s.subtitles
-        note.text = when {
-            sub.lines.isEmpty() -> "No transcript for this book yet. The map server makes one with its map."
-            sub.voiced -> "Speakers in color"
-            else -> "Narration only. Speakers show once the map server works out who says what."
+        bar.subtitle = when {
+            sub.lines.isEmpty() -> "No transcript yet"
+            sub.voiced -> s.engine.chapterTitle(s.engine.currentChapter) ?: "Speakers in color"
+            else -> "Narration only, for now"
         }
-        playButton.text = if (s.engine.isPlaying) "Pause" else "Play"
+        showTransport(transport)
     }
 
     /** Where the voice is: the line, and how far through it, 0 to 1. */
@@ -164,13 +162,13 @@ class SubtitlesActivity : ServiceActivity() {
      * place.
      */
     private fun measureNow() {
-        val w = stage.width
-        if (w == 0) return
+        val w = stage.width - stage.paddingLeft - stage.paddingRight
+        if (w <= 0) return
         column.measure(
             View.MeasureSpec.makeMeasureSpec(w, View.MeasureSpec.EXACTLY),
             View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED),
         )
-        column.layout(0, 0, w, column.measuredHeight)
+        column.layout(stage.paddingLeft, 0, stage.paddingLeft + w, column.measuredHeight)
     }
 
     /** Put the lines around [cur] on screen, from scratch. */
@@ -246,50 +244,38 @@ class SubtitlesActivity : ServiceActivity() {
         }
     }
 
-    private fun textView(alpha: Float): TextView = TextView(this).apply {
-        setTextColor(Color.WHITE)
-        this.alpha = alpha
-        gravity = Gravity.CENTER
-    }
-
-    private fun control(label: String, onClick: () -> Unit) = Button(this).apply {
-        text = label
-        setTextColor(Color.WHITE)
-        setBackgroundColor(0x22FFFFFF)
-        setOnClickListener { onClick(); shownKey = null; refresh() }
-    }
-
     override fun buildUi(): View {
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(Color.BLACK)
-            setPadding(dp(20), dp(12), dp(20), dp(16))
         }
-        title = textView(0.8f).apply { textSize = 15f; setTypeface(typeface, Typeface.BOLD) }
-        note = textView(0.5f).apply { textSize = 12f; setPadding(0, dp(2), 0, dp(8)) }
-        root.addView(title)
-        root.addView(note)
+        // The header as on the player: the size of the text, and Close where CC opens it.
+        bar = toolbar("", up = false)
+        val smaller = tile("Smaller") { service?.settings?.let { it.subtitleSize = it.subtitleSize - 2 } }
+        val larger = tile("Larger") { service?.settings?.let { it.subtitleSize = it.subtitleSize + 2 } }
+        val close = tile("Close") { finish() }
+        smaller.value.text = "A−"
+        larger.value.text = "A+"
+        close.value.text = "CC"
+        headerTiles(bar, listOf(smaller, larger, close))
+        root.addView(bar)
 
         column = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         stage = FrameLayout(this).apply {
             clipChildren = true
+            setPadding(dp(20), 0, dp(20), 0)
             addView(column, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
             setOnClickListener { service?.toggle(); refresh() }
         }
         root.addView(stage, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
 
-        val s = { service }
-        playButton = control("Play") { s()?.toggle() }
+        // The transport as on the player: previous chapter, back, play, forward, next chapter.
+        transport = transport()
         root.addView(
-            LinearLayout(this).apply {
-                orientation = LinearLayout.HORIZONTAL
-                setPadding(0, dp(10), 0, 0)
-                val lp = { LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginEnd = dp(6) } }
-                addView(control("Back") { s()?.skipBack() }, lp())
-                addView(playButton, lp())
-                addView(control("A−") { s()?.settings?.let { it.subtitleSize = it.subtitleSize - 2 } }, lp())
-                addView(control("A+") { s()?.settings?.let { it.subtitleSize = it.subtitleSize + 2 } }, lp())
-                addView(control("Close") { finish() }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            transport.view,
+            LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                gravity = Gravity.CENTER_HORIZONTAL
+                bottomMargin = dp(16)
             },
         )
         return root

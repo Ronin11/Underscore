@@ -43,12 +43,8 @@ class MainActivity : ServiceActivity() {
     private lateinit var elapsed: TextView
     private lateinit var remaining: TextView
     private lateinit var bookLine: TextView
-    private lateinit var prevButton: ImageButton
-    private lateinit var nextButton: ImageButton
-    private lateinit var playButton: ImageButton
-    private lateinit var backLabel: TextView
-    private lateinit var forwardLabel: TextView
     private lateinit var musicLine: TextView
+    private lateinit var transport: Transport
     private lateinit var speedTile: Tile
     private lateinit var sleepTile: Tile
     private lateinit var musicTile: Tile
@@ -165,14 +161,7 @@ class MainActivity : ServiceActivity() {
             ""
         }
 
-        playButton.setImageResource(if (playing) R.drawable.ic_pause else R.drawable.ic_play)
-        playButton.contentDescription = if (playing) "Pause" else "Play"
-        prevButton.isEnabled = inChapter
-        nextButton.isEnabled = inChapter && chapter + 1 < chapters
-        prevButton.alpha = if (prevButton.isEnabled) 1f else 0.3f
-        nextButton.alpha = if (nextButton.isEnabled) 1f else 0.3f
-        backLabel.text = "${s.settings.skipBackSec}"
-        forwardLabel.text = "${s.settings.skipForwardSec}"
+        showTransport(transport)
 
         val music = buildString {
             if (s.mapName != null) append("Map: ${s.mapName}  ·  ${e.mapStatus}")
@@ -377,39 +366,6 @@ class MainActivity : ServiceActivity() {
         go(Tab.LIBRARY)
     }
 
-    /** One of the tools in the header: a small caption under a value. */
-    class Tile(val view: View, val value: TextView)
-
-    private fun tile(caption: String, onClick: (View) -> Unit): Tile {
-        val paper = ContextCompat.getColor(this, R.color.paper)
-        val value = label(14f).apply { setTypeface(typeface, android.graphics.Typeface.BOLD); setTextColor(paper); maxLines = 1 }
-        val cap = label(10f).apply { text = caption; alpha = 0.7f; setTextColor(paper) }
-        val box = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            gravity = Gravity.CENTER
-            minimumWidth = dp(52)
-            setPadding(dp(6), dp(4), dp(6), dp(4))
-            isClickable = true
-            isFocusable = true
-            setBackgroundResource(selectableBackground())
-            addView(value)
-            addView(cap)
-            setOnClickListener { onClick(this) }
-        }
-        return Tile(box, value)
-    }
-
-    private fun iconButton(icon: Int, description: String, size: Int, onClick: () -> Unit): ImageButton =
-        ImageButton(this).apply {
-            setImageResource(icon)
-            contentDescription = description
-            setBackgroundResource(selectableBackground())
-            scaleType = android.widget.ImageView.ScaleType.FIT_CENTER
-            setPadding(dp(8), dp(8), dp(8), dp(8))
-            layoutParams = LinearLayout.LayoutParams(dp(size), dp(size))
-            setOnClickListener { onClick(); refresh() }
-        }
-
     override fun buildUi(): View {
         val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         bar = toolbar("underscore", up = false)
@@ -422,13 +378,7 @@ class MainActivity : ServiceActivity() {
         musicTile = tile("Music") { musicMenu(it) }
         textTile = tile("Text") { openSubtitles() }
         textTile.value.text = "CC"
-        bar.addView(
-            LinearLayout(this).apply {
-                orientation = LinearLayout.HORIZONTAL
-                for (t in listOf(speedTile, sleepTile, musicTile, textTile)) addView(t.view)
-            },
-            androidx.appcompat.widget.Toolbar.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.MATCH_PARENT, Gravity.END),
-        )
+        headerTiles(bar, listOf(speedTile, sleepTile, musicTile, textTile))
 
         val body = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -529,39 +479,9 @@ class MainActivity : ServiceActivity() {
         body.addView(bookLine)
 
         // Transport: previous chapter, back, play, forward, next chapter.
-        prevButton = iconButton(R.drawable.ic_skip_previous, "Previous chapter", 48) { service?.previousChapter() }
-        nextButton = iconButton(R.drawable.ic_skip_next, "Next chapter", 48) { service?.nextChapter() }
-        val back = iconButton(R.drawable.ic_replay, "Skip back", 56) { service?.skipBack() }
-        val forward = iconButton(R.drawable.ic_forward, "Skip forward", 56) { service?.skipForward() }
-        backLabel = label(10f)
-        forwardLabel = label(10f)
-        playButton = iconButton(R.drawable.ic_play, "Play", 80) { service?.toggle() }.apply {
-            background = GradientDrawable().apply {
-                shape = GradientDrawable.OVAL
-                setColor(themeColor(androidx.appcompat.R.attr.colorAccent))
-            }
-            imageTintList = ColorStateList.valueOf(ContextCompat.getColor(context, R.color.ink))
-            setPadding(dp(20), dp(20), dp(20), dp(20))
-        }
-        fun stacked(button: View, under: TextView): View = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            gravity = Gravity.CENTER
-            addView(button)
-            addView(under)
-        }
-        val transport = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(0, dp(24), 0, dp(8))
-            val gap = dp(10)
-            addView(prevButton)
-            addView(stacked(back, backLabel), LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { leftMargin = gap })
-            addView(playButton, LinearLayout.LayoutParams(dp(80), dp(80)).apply { leftMargin = gap; rightMargin = gap })
-            addView(stacked(forward, forwardLabel), LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { rightMargin = gap })
-            addView(nextButton)
-        }
+        transport = transport()
         body.addView(
-            transport,
+            transport.view,
             LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
                 gravity = Gravity.CENTER_HORIZONTAL
             },

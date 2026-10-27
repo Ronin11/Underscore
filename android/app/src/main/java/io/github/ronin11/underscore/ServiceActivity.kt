@@ -16,6 +16,7 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.EditText
 import android.widget.LinearLayout
+import android.widget.ImageButton
 import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
@@ -308,6 +309,113 @@ abstract class ServiceActivity : AppCompatActivity() {
         bar.navigationIcon?.setTint(ContextCompat.getColor(this, R.color.paper))
         bar.overflowIcon?.setTint(ContextCompat.getColor(this, R.color.paper))
         return bar
+    }
+
+    /** One of the tools in a screen's header: a small caption under a value. */
+    class Tile(val view: View, val value: TextView)
+
+    protected fun tile(caption: String, onClick: (View) -> Unit): Tile {
+        val paper = ContextCompat.getColor(this, R.color.paper)
+        val value = label(14f).apply { setTypeface(typeface, android.graphics.Typeface.BOLD); setTextColor(paper); maxLines = 1 }
+        val cap = label(10f).apply { text = caption; alpha = 0.7f; setTextColor(paper) }
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER
+            minimumWidth = dp(52)
+            setPadding(dp(6), dp(4), dp(6), dp(4))
+            isClickable = true
+            isFocusable = true
+            setBackgroundResource(selectableBackground())
+            addView(value)
+            addView(cap)
+            setOnClickListener { onClick(this) }
+        }
+        return Tile(box, value)
+    }
+
+    /** Put [tiles] at the end of a screen's header bar, in order. */
+    protected fun headerTiles(bar: Toolbar, tiles: List<Tile>) {
+        bar.addView(
+            LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                for (t in tiles) addView(t.view)
+            },
+            Toolbar.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.MATCH_PARENT, Gravity.END),
+        )
+    }
+
+    protected fun iconButton(icon: Int, description: String, size: Int, onClick: () -> Unit): ImageButton =
+        ImageButton(this).apply {
+            setImageResource(icon)
+            contentDescription = description
+            setBackgroundResource(selectableBackground())
+            scaleType = android.widget.ImageView.ScaleType.FIT_CENTER
+            setPadding(dp(8), dp(8), dp(8), dp(8))
+            layoutParams = LinearLayout.LayoutParams(dp(size), dp(size))
+            setOnClickListener { onClick(); refresh() }
+        }
+
+    /** The transport row: previous chapter, back, play, forward, next chapter. */
+    class Transport(
+        val view: View,
+        val prev: ImageButton,
+        val next: ImageButton,
+        val play: ImageButton,
+        val backLabel: TextView,
+        val forwardLabel: TextView,
+    )
+
+    protected fun transport(): Transport {
+        val prev = iconButton(R.drawable.ic_skip_previous, "Previous chapter", 48) { service?.previousChapter() }
+        val next = iconButton(R.drawable.ic_skip_next, "Next chapter", 48) { service?.nextChapter() }
+        val back = iconButton(R.drawable.ic_replay, "Skip back", 56) { service?.skipBack() }
+        val forward = iconButton(R.drawable.ic_forward, "Skip forward", 56) { service?.skipForward() }
+        val backLabel = label(10f)
+        val forwardLabel = label(10f)
+        val play = iconButton(R.drawable.ic_play, "Play", 80) { service?.toggle() }.apply {
+            background = android.graphics.drawable.GradientDrawable().apply {
+                shape = android.graphics.drawable.GradientDrawable.OVAL
+                setColor(themeColor(androidx.appcompat.R.attr.colorAccent))
+            }
+            imageTintList = android.content.res.ColorStateList.valueOf(ContextCompat.getColor(context, R.color.ink))
+            setPadding(dp(20), dp(20), dp(20), dp(20))
+        }
+        fun stacked(button: View, under: TextView): View = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER
+            addView(button)
+            addView(under)
+        }
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(0, dp(24), 0, dp(8))
+            val gap = dp(10)
+            addView(prev)
+            addView(stacked(back, backLabel), LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { leftMargin = gap })
+            addView(play, LinearLayout.LayoutParams(dp(80), dp(80)).apply { leftMargin = gap; rightMargin = gap })
+            addView(stacked(forward, forwardLabel), LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { rightMargin = gap })
+            addView(next)
+        }
+        return Transport(row, prev, next, play, backLabel, forwardLabel)
+    }
+
+    /** Bring a transport row up to date: play or pause, chapters there are to skip to, skip lengths. */
+    protected fun showTransport(t: Transport) {
+        val s = service ?: return
+        val e = s.engine
+        val playing = e.isPlaying
+        val chapters = e.chapterCount
+        val chapter = e.currentChapter
+        val inChapter = chapters > 0 && chapter >= 0
+        t.play.setImageResource(if (playing) R.drawable.ic_pause else R.drawable.ic_play)
+        t.play.contentDescription = if (playing) "Pause" else "Play"
+        t.prev.isEnabled = inChapter
+        t.next.isEnabled = inChapter && chapter + 1 < chapters
+        t.prev.alpha = if (t.prev.isEnabled) 1f else 0.3f
+        t.next.alpha = if (t.next.isEnabled) 1f else 0.3f
+        t.backLabel.text = "${s.settings.skipBackSec}"
+        t.forwardLabel.text = "${s.settings.skipForwardSec}"
     }
 
     /** A bold, small heading above a group of rows. */

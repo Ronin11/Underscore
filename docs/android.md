@@ -190,8 +190,10 @@ the book scrolls past on black like a teleprompter, following the voice
 every frame rather than a line at a time. In the line being read, the
 words already spoken are bright and the rest dim. There are no word
 timings, only each line's start and end, so a line's words are spread
-over its time by their length. The screen stays on, and the text size is
-set there. `Subtitles.kt` reads the open book's lines from the files the
+over its time by their length. The screen stays on. Its header and
+transport match the player's: A− and A+ for the text size and Close
+where CC is, and the same five buttons along the bottom. Both screens
+build them from `ServiceActivity`. `Subtitles.kt` reads the open book's lines from the files the
 app keeps: the voices file when the map server has worked out who says
 what (`docs/map-server.md`), otherwise the transcript, all the
 narrator's. With voices, each speaker starts a new line with their name
