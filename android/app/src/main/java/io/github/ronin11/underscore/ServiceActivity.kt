@@ -333,6 +333,13 @@ abstract class ServiceActivity : AppCompatActivity() {
         return Tile(box, value)
     }
 
+    /** The map icon at [sizeDp], in the header's light color. */
+    protected fun mapIcon(sizeDp: Int): android.graphics.drawable.Drawable? =
+        ContextCompat.getDrawable(this, R.drawable.ic_map)?.mutate()?.apply {
+            setTint(ContextCompat.getColor(this@ServiceActivity, R.color.paper))
+            setBounds(0, 0, dp(sizeDp), dp(sizeDp))
+        }
+
     /** Put [tiles] at the end of a screen's header bar, in order. */
     protected fun headerTiles(bar: Toolbar, tiles: List<Tile>) {
         bar.addView(

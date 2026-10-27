@@ -180,6 +180,13 @@ class MainActivity : ServiceActivity() {
             else -> "Off"
         }
         musicTile.value.text = if (!e.musicEnabled) "Off" else if (e.hasMap) "Map" else "On"
+        // A loaded map shows its icon beside the word.
+        val showMapIcon = e.musicEnabled && e.hasMap
+        if (showMapIcon != (musicTile.value.compoundDrawablesRelative[0] != null)) {
+            val icon = if (showMapIcon) mapIcon(14) else null
+            musicTile.value.setCompoundDrawablesRelative(icon, null, null, null)
+            musicTile.value.compoundDrawablePadding = dp(4)
+        }
 
         if (s.settings.keepScreenOn && playing) {
             window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)

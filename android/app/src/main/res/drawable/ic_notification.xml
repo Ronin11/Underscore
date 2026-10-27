@@ -1,11 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- The status bar and media player draw this as a silhouette, so it is the
-     launcher icon's lines alone, with no background. -->
+     launcher icon's shapes alone, with no background. -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="24dp"
     android:height="24dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
-    <path android:fillColor="#FFFFFFFF" android:pathData="M24,70h60v8h-60z" />
-    <path android:fillColor="#FFFFFFFF" android:pathData="M24,30h60v6h-60z M24,44h40v6h-40z M24,58h52v6h-52z" />
+    <path android:fillColor="#FFFFFFFF" android:pathData="M24,30h60v6h-60z M24,44h36v6h-36z M24,58h40v6h-40z" />
+    <path android:fillColor="#FFFFFFFF" android:pathData="M24,70h21v8h-21z M48,70h21v8h-21z M75,70h9v8h-9z" />
+    <path android:fillColor="#FFFFFFFF" android:fillType="evenOdd" android:pathData="M72,40 a8,8 0 0 1 8,8 c0,7 -8,15 -8,21 c0,-6 -8,-14 -8,-21 a8,8 0 0 1 8,-8z M72,44.5 a3.5,3.5 0 1 0 0.01,0z" />
 </vector>

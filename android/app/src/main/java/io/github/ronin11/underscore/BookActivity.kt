@@ -351,7 +351,15 @@ class BookActivity : ServiceActivity() {
         list.addView(files.view)
 
         list.addView(divider())
-        list.addView(heading("Maps"))
+        list.addView(
+            heading("Maps").apply {
+                val icon = androidx.core.content.ContextCompat.getDrawable(context, R.drawable.ic_map)?.mutate()
+                icon?.setTint(currentTextColor)
+                icon?.setBounds(0, 0, dp(16), dp(16))
+                setCompoundDrawablesRelative(icon, null, null, null)
+                compoundDrawablePadding = dp(6)
+            },
+        )
         mapsNote = label(13f, Gravity.START).apply { alpha = 0.7f; setPadding(dp(16), 0, dp(16), dp(4)) }
         list.addView(mapsNote)
         mapsList = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
