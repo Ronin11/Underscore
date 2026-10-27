@@ -148,26 +148,6 @@ class BooksActivity : ServiceActivity() {
         onPhone = service?.storage?.books().orEmpty().mapNotNull { b -> b.serverId?.let { it to b } }.toMap()
     }
 
-    /** Keep a book offline, or stop. */
-    private fun keepDialog(book: ServerBook) {
-        val s = service ?: return
-        val kept = onPhone[book.id]?.pinned == true
-        val wifi = if (s.settings.wifiOnly) " It downloads on Wi-Fi." else ""
-        AlertDialog.Builder(this)
-            .setTitle(book.title)
-            .setMessage(
-                if (kept) "Kept offline. Stop keeping it, and it can be removed to make room like any other book."
-                else "Download the whole book, its map, and the map's music, and keep them until you say otherwise.$wifi",
-            )
-            .setPositiveButton(if (kept) "Stop keeping" else "Keep offline") { _, _ ->
-                s.keepOffline(book, !kept)
-                notePhone()
-                apply()
-            }
-            .setNegativeButton("Cancel", null)
-            .show()
-    }
-
     private fun sortDialog() {
         val orders = Order.entries
         AlertDialog.Builder(this)
@@ -323,7 +303,7 @@ class BooksActivity : ServiceActivity() {
             divider = null
             setOnItemClickListener { _, _, position, _ -> shown.getOrNull(position)?.let { open(it) } }
             setOnItemLongClickListener { _, _, position, _ ->
-                shown.getOrNull(position)?.let { keepDialog(it) }
+                shown.getOrNull(position)?.let { BookActivity.open(this@BooksActivity, it.id) }
                 true
             }
         }

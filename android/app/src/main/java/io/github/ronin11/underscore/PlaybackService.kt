@@ -839,16 +839,7 @@ class PlaybackService : Service() {
             return null
         }
         mapServerProblem = null
-        val list = v.optJSONArray("maps") ?: org.json.JSONArray()
-        val maps = (0 until list.length()).map { i ->
-            val m = list.getJSONObject(i)
-            ServerMap(m.getString("id"), m.optString("name"), m.optBoolean("complete", true), m.optInt("cues"), m.optLong("updated"))
-        }
-        val job = v.optJSONObject("job")?.let { j ->
-            val d = j.optJSONArray("done") ?: org.json.JSONArray()
-            MapJob(j.optString("map"), j.optString("state"), (0 until d.length()).map { d.getInt(it) }.toSet(), j.optInt("total"), j.optString("message"))
-        }
-        return BookMaps(id, v.optString("default").takeIf { v.has("default") && !v.isNull("default") }, maps, job)
+        return parseBookMaps(id, v)
     }
 
     /**
@@ -1865,6 +1856,20 @@ class PlaybackService : Service() {
         /** Kept beside a book on the server: its music map, and a finished transcript. */
         const val SERVER_MAP = "underscore.toml"
         const val SERVER_TRANSCRIPT = "underscore.transcript.json"
+        /** The map server's answer about book [id]: its maps, default, and job. */
+        fun parseBookMaps(id: String, v: org.json.JSONObject): BookMaps {
+            val list = v.optJSONArray("maps") ?: org.json.JSONArray()
+            val maps = (0 until list.length()).map { i ->
+                val m = list.getJSONObject(i)
+                ServerMap(m.getString("id"), m.optString("name"), m.optBoolean("complete", true), m.optInt("cues"), m.optLong("updated"))
+            }
+            val job = v.optJSONObject("job")?.let { j ->
+                val d = j.optJSONArray("done") ?: org.json.JSONArray()
+                MapJob(j.optString("map"), j.optString("state"), (0 until d.length()).map { d.getInt(it) }.toSet(), j.optInt("total"), j.optString("message"))
+            }
+            return BookMaps(id, v.optString("default").takeIf { v.has("default") && !v.isNull("default") }, maps, job)
+        }
+
         /** How often to ask how a map being made is coming along. */
         const val MAPS_EVERY_MS = 60_000L
         private const val ACTIONS =

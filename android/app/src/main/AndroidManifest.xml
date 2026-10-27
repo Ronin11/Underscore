@@ -55,6 +55,12 @@
             android:label="Connections" />
 
         <activity
+            android:name=".BookActivity"
+            android:exported="false"
+            android:label="Book"
+            android:parentActivityName=".BooksActivity" />
+
+        <activity
             android:name=".DebugActivity"
             android:exported="false"
             android:label="Debug"

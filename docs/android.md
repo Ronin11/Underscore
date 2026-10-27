@@ -25,6 +25,10 @@ A Kotlin shell over the Rust engine. The files that matter:
   tab, and storage on Settings.
 - `BooksActivity.kt` is the Library tab: the server's books, and a file
   from the phone under its menu.
+- `BookActivity.kt` opens when a book in the library is held: what of
+  it is on the phone and where, with download and remove; its maps on
+  the map server, each readable cue by cue (`MapText.kt`) and choosable
+  as the one it plays with; its transcript; and its ids and dates.
 - `ConnectionsActivity.kt` is the Connections tab: the Audiobookshelf
   sign-in, the music server and the music folder maps play from, and the
   sleep sources. An empty section offers to add one, and the + in the

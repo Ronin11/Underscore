@@ -55,7 +55,7 @@ android/         Gradle project. Engine.kt (JNI wrapper), PlaybackService.kt
                  audio focus), Settings.kt (the preferences the service applies
                  to the engine), ServiceActivity.kt (what the screens share,
                  and the tabs), four tabs: MainActivity.kt (the player),
-                 BooksActivity.kt (the library), ConnectionsActivity.kt
+                 BooksActivity.kt (the library; holding a book opens BookActivity.kt), ConnectionsActivity.kt
                  (servers, music folder, sleep sources), SettingsActivity.kt;
                  DebugActivity.kt, BugReport.kt, Sleep.kt (the sources that
                  notice the listener fell asleep), SleepSetup.kt (their
