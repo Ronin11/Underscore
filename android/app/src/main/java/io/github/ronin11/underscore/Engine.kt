@@ -132,6 +132,10 @@ class Engine(sampleRate: Int, val channels: Int) : AutoCloseable {
     fun mapServerBuild(id: String, chapter: Int): String = nativeMapServerBuild(h(), id, chapter)
     /** Make [map] the map book [id] opens with: JSON, or `{"error": ...}`. Network. */
     fun mapServerDefault(id: String, map: String): String = nativeMapServerDefault(h(), id, map)
+    /** Who says what in book [id], as JSON, or null. Network. */
+    fun mapServerVoices(id: String): String? = nativeMapServerVoices(h(), id)
+    /** Ask for who says what in book [id] from [chapter] on: the job as JSON, or `{"error": ...}`. Network. */
+    fun mapServerBuildVoices(id: String, chapter: Int): String = nativeMapServerBuildVoices(h(), id, chapter)
     /** The map server's transcript of book [id], or null. Network. */
     fun mapServerTranscript(id: String): ByteArray? = nativeMapServerTranscript(h(), id)
 
@@ -234,6 +238,8 @@ class Engine(sampleRate: Int, val channels: Int) : AutoCloseable {
     private external fun nativeMapServerBuild(handle: Long, id: String, chapter: Int): String
     private external fun nativeMapServerDefault(handle: Long, id: String, map: String): String
     private external fun nativeMapServerTranscript(handle: Long, id: String): ByteArray?
+    private external fun nativeMapServerVoices(handle: Long, id: String): String?
+    private external fun nativeMapServerBuildVoices(handle: Long, id: String, chapter: Int): String
     private external fun nativeServerDownloadBook(handle: Long, id: String, cacheDir: String): String
     private external fun nativeMapFiles(handle: Long, toml: String, cacheDir: String, fetch: Boolean): String
     private external fun nativeRender(handle: Long, out: FloatArray, nowMs: Long): Int

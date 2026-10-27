@@ -61,7 +61,8 @@ android/         Gradle project. Engine.kt (JNI wrapper), PlaybackService.kt
                  (servers, music folder, sleep sources), SettingsActivity.kt;
                  DebugActivity.kt, BugReport.kt, Sleep.kt (the sources that
                  notice the listener fell asleep), SleepSetup.kt (their
-                 setup and test screens), Shake.kt, Storage.kt (each
+                 setup and test screens), Shake.kt, Subtitles.kt and SubtitlesActivity.kt
+                 (the line being read, speakers in color), Storage.kt (each
                  book's files and map, for keeping books offline). UI
                  built in code, no layout XML; icons are vector
                  drawables under res/drawable.

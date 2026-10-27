@@ -183,6 +183,40 @@ impl MapServer {
         )
     }
 
+    /// Who says what in book `id`, as the server's JSON, or None when it
+    /// has not been worked out yet.
+    ///
+    /// # Errors
+    /// Not reachable, or refused.
+    pub fn voices(&self, books: &Audiobookshelf, id: &str) -> Result<Option<String>, Error> {
+        let (status, bytes) = self.call(books, "GET", &format!("/api/books/{id}/voices"), None)?;
+        match status {
+            200..300 => Ok(Some(String::from_utf8_lossy(&bytes).into_owned())),
+            404 => Ok(None),
+            s => Err(Error::Backend(format!("map server: HTTP {s}"))),
+        }
+    }
+
+    /// Ask the server to work out who says what in book `id`, from
+    /// `chapter` on. Returns the job.
+    ///
+    /// # Errors
+    /// Not reachable, or refused.
+    pub fn build_voices(
+        &self,
+        books: &Audiobookshelf,
+        id: &str,
+        chapter: u32,
+    ) -> Result<String, Error> {
+        let body = serde_json::json!({ "chapter": chapter }).to_string();
+        self.ok(
+            books,
+            "POST",
+            &format!("/api/books/{id}/voices/build"),
+            Some(&body),
+        )
+    }
+
     /// The transcript the server made of book `id`, or None.
     ///
     /// # Errors

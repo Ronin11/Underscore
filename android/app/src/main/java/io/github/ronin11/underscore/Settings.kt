@@ -64,6 +64,21 @@ class Settings(context: Context) {
         get() = STORAGE_STEPS_GB[storageStep].takeIf { it >= 0 }?.let { it * 1_000_000_000L }
 
     /** Over the budget, remove the books played longest ago without asking. */
+    /** Subtitle text size, in sp. */
+    var subtitleSize: Int
+        get() = prefs.getInt(SUBTITLE_SIZE, 30)
+        set(v) = prefs.edit().putInt(SUBTITLE_SIZE, v.coerceIn(16, 60)).apply()
+
+    /** Show the line being read on the lock screen and notification, instead of the chapter. */
+    var lockScreenLine: Boolean
+        get() = prefs.getBoolean(LOCK_SCREEN_LINE, false)
+        set(v) = prefs.edit().putBoolean(LOCK_SCREEN_LINE, v).apply()
+
+    /** Keep the music well under the voice, for listeners who find music under speech hard. */
+    var voiceFirst: Boolean
+        get() = prefs.getBoolean(VOICE_FIRST_KEY, false)
+        set(v) = prefs.edit().putBoolean(VOICE_FIRST_KEY, v).apply()
+
     /** Ask the map server to make a map for a book that has none. */
     var makeMaps: Boolean
         get() = prefs.getBoolean(MAKE_MAPS, true)
@@ -92,7 +107,7 @@ class Settings(context: Context) {
     fun applyTo(engine: Engine) {
         engine.setSkipMs(skipBackSec * 1000L, skipForwardSec * 1000L)
         engine.setRewind(rewindOnResume)
-        engine.setMusicLevel(musicLevel / 100f)
+        engine.setMusicLevel(musicLevel / 100f * if (voiceFirst) VOICE_FIRST else 1f)
     }
 
     /**
@@ -116,6 +131,11 @@ class Settings(context: Context) {
         private const val WIFI_ONLY = "wifi_only"
         private const val AUTO_REMOVE = "auto_remove"
         private const val MAKE_MAPS = "make_maps"
+        private const val SUBTITLE_SIZE = "subtitle_size"
+        private const val LOCK_SCREEN_LINE = "lock_screen_line"
+        private const val VOICE_FIRST_KEY = "voice_first"
+        /** Voice first: the music at about a third of its level, some 10 dB lower. */
+        const val VOICE_FIRST = 0.32f
         private const val SKIP_BACK = "skip_back_sec"
         private const val SKIP_FORWARD = "skip_forward_sec"
         private const val REWIND = "rewind_on_resume"

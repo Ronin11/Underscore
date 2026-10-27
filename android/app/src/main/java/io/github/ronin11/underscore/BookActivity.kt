@@ -40,6 +40,7 @@ class BookActivity : ServiceActivity() {
     private lateinit var mapsList: LinearLayout
     private lateinit var mapsNote: TextView
     private lateinit var transcriptRow: Row
+    private lateinit var voicesRow: Row
     private lateinit var details: Row
 
     /** The map server's answer for this book, once asked. */
@@ -127,6 +128,15 @@ class BookActivity : ServiceActivity() {
 
         showMaps(s)
         transcriptRow.summary = transcriptSummary(s)
+        voicesRow.summary = when {
+            s.mapServerUrl == null -> "Add a map server under Connections."
+            maps?.voicesJob?.active == true -> maps!!.voicesJob!!.let { j ->
+                "Being worked out: ${j.done.size} of ${j.total.takeIf { it > 0 } ?: "?"} chapters. ${j.message}"
+            }
+            maps?.voices != null -> "Worked out. Speakers show in color in the subtitles. Tap to do it again."
+            maps != null -> "Not yet. Tap to have the map server work out who says what. It takes a night for a long book."
+            else -> "Asking the map server…"
+        }
 
         details.summary = buildString {
             append("Audiobookshelf id: $id\n")
@@ -349,6 +359,15 @@ class BookActivity : ServiceActivity() {
         list.addView(heading("Transcript"))
         transcriptRow = row("Transcript", null) { service?.let { readTranscript(it) } }
         list.addView(transcriptRow.view)
+        voicesRow = row("Who says what", null) {
+            val s = service ?: return@row
+            if (s.mapServerUrl == null) return@row
+            s.makeVoices(id) { problem ->
+                toast(problem ?: "Asked. Speakers appear in the subtitles as chapters are done.")
+                askMaps()
+            }
+        }
+        list.addView(voicesRow.view)
 
         list.addView(divider())
         list.addView(heading("Details"))

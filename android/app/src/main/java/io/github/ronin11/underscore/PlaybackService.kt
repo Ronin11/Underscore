@@ -760,6 +760,8 @@ class PlaybackService : Service() {
                 map?.let { useServerMap(id, it) }
             }
             followMapServer(id, hasOwnMap = map != null)
+            last.getString("key", null)?.let { subtitles.load(it) }
+            fetchVoices(id, null)
         }, "underscore-companions").start()
     }
 
@@ -781,10 +783,36 @@ class PlaybackService : Service() {
         val active: Boolean get() = state == "queued" || state == "running"
     }
 
-    data class BookMaps(val book: String, val default: String?, val maps: List<ServerMap>, val job: MapJob?)
+    data class BookMaps(
+        val book: String,
+        val default: String?,
+        val maps: List<ServerMap>,
+        val job: MapJob?,
+        /** When the server's voices file last changed, in seconds since 1970, or null for none. */
+        val voices: Long? = null,
+        val voicesJob: MapJob? = null,
+    )
 
     /** What the map server has for the open book. */
     @Volatile var bookMaps: BookMaps? = null
+
+    /** The open book's lines, for subtitles and the lock screen. */
+    val subtitles by lazy { Subtitles(filesDir) }
+
+    /** Load the open book's subtitles from what the phone keeps. Off the main thread. */
+    private fun loadSubtitles() {
+        val key = last.getString("key", null) ?: return
+        Thread({ subtitles.load(key) }, "underscore-subtitles").start()
+    }
+
+    /** Fetch who says what in server book [id] from the map server, if it has newer. Network. */
+    private fun fetchVoices(id: String, serverSaved: Long?) {
+        if (mapServerUrl == null) return
+        val key = "abs:$id"
+        if (serverSaved != null && subtitles.key == key && subtitles.voicesSaved / 1000 >= serverSaved) return
+        val json = engine.mapServerVoices(id) ?: return
+        subtitles.saveVoices(key, json)
+    }
 
     /** A book with several maps and no default: the screens ask which. */
     @Volatile var chooseMapFor: String? = null
@@ -930,14 +958,18 @@ class PlaybackService : Service() {
         if (last.getString("id", null) != bm.book) return
         val loaded = serverMapLoaded
         val building = bm.job?.active == true
-        if (!building && !wantMade && (loaded == null || loaded.done == null)) return
+        val voicing = bm.voicesJob?.active == true || bm.job?.message?.startsWith("Map done") == true
+        if (!building && !voicing && !wantMade && (loaded == null || loaded.done == null)) return
         if (!mapsAsking && now() - mapsAskedAt > MAPS_EVERY_MS) {
             mapsAsking = true
             Thread({
                 val fresh = askBookMaps(bm.book)
                 mapsAskedAt = now()
                 mapsAsking = false
-                if (fresh != null) mainHandler.post { if (last.getString("id", null) == fresh.book) bookMaps = fresh }
+                if (fresh != null) {
+                    fetchVoices(fresh.book, fresh.voices)
+                    mainHandler.post { if (last.getString("id", null) == fresh.book) bookMaps = fresh }
+                }
             }, "underscore-maps-ask").start()
         }
         val chapter = chapterNumber()
@@ -959,6 +991,22 @@ class PlaybackService : Service() {
                 info.updated > loaded.updated && (info.complete || job?.done?.contains(chapter) == true) ->
                 loadServerMap(bm, pick)
         }
+    }
+
+    /** Ask the map server to work out who says what in book [id]. Network, so off the main thread. */
+    fun makeVoices(id: String, onDone: (String?) -> Unit) {
+        Thread({
+            val v = runCatching { org.json.JSONObject(engine.mapServerBuildVoices(id, 1)) }.getOrNull()
+            val problem = v?.optString("error")?.takeIf { it.isNotEmpty() } ?: if (v == null) "no answer" else null
+            mapsAskedAt = 0
+            mainHandler.post { onDone(problem) }
+        }, "underscore-voices-build").start()
+    }
+
+    /** The line under the title on the lock screen and notification: the line being read, or the chapter. */
+    private fun metaLine(): String? {
+        if (settings.lockScreenLine) subtitles.current(engine.positionMs)?.let { return it.text }
+        return chapterLine()
     }
 
     /** One line on the map being made for the open book, or null. */
@@ -1163,6 +1211,7 @@ class PlaybackService : Service() {
             if (mapName != null || engine.hasMap) dropMap()
             restoreMap()
         }
+        loadSubtitles()
     }
 
     /** Keep the tokens, which change when the access token is renewed. */
@@ -1717,7 +1766,7 @@ class PlaybackService : Service() {
         }
         val drifted = abs(engine.positionMs - expected) > 1000
         if (playing != shownPlaying || drifted || engine.speed != shownSpeed ||
-            speechName != shownTitle || chapterLine() != shownChapter || engine.durationMs != shownDurationMs
+            speechName != shownTitle || metaLine() != shownChapter || engine.durationMs != shownDurationMs
         ) {
             publishState()
         }
@@ -1729,7 +1778,7 @@ class PlaybackService : Service() {
         val position = engine.positionMs
         val speed = engine.speed
         val duration = engine.durationMs
-        val chapter = chapterLine()
+        val chapter = metaLine()
         val state = PlaybackStateCompat.Builder()
             .setActions(ACTIONS)
             .setState(
@@ -1863,11 +1912,18 @@ class PlaybackService : Service() {
                 val m = list.getJSONObject(i)
                 ServerMap(m.getString("id"), m.optString("name"), m.optBoolean("complete", true), m.optInt("cues"), m.optLong("updated"))
             }
-            val job = v.optJSONObject("job")?.let { j ->
-                val d = j.optJSONArray("done") ?: org.json.JSONArray()
-                MapJob(j.optString("map"), j.optString("state"), (0 until d.length()).map { d.getInt(it) }.toSet(), j.optInt("total"), j.optString("message"))
+            fun job(j: org.json.JSONObject?) = j?.let {
+                val d = it.optJSONArray("done") ?: org.json.JSONArray()
+                MapJob(it.optString("map"), it.optString("state"), (0 until d.length()).map { n -> d.getInt(n) }.toSet(), it.optInt("total"), it.optString("message"))
             }
-            return BookMaps(id, v.optString("default").takeIf { v.has("default") && !v.isNull("default") }, maps, job)
+            return BookMaps(
+                id,
+                v.optString("default").takeIf { v.has("default") && !v.isNull("default") },
+                maps,
+                job(v.optJSONObject("job")),
+                v.optLong("voices").takeIf { v.has("voices") && !v.isNull("voices") },
+                job(v.optJSONObject("voices_job")),
+            )
         }
 
         /** How often to ask how a map being made is coming along. */

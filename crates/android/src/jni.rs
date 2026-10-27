@@ -1354,3 +1354,56 @@ pub extern "system" fn Java_io_github_ronin11_underscore_Engine_nativeMapServerT
         }
     }
 }
+
+/// Who says what in book `id`, as the map server's JSON, or null when
+/// there is none yet or it could not be asked. Network I/O.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_io_github_ronin11_underscore_Engine_nativeMapServerVoices(
+    mut env: JNIEnv,
+    _this: JObject,
+    handle: jlong,
+    id: JString,
+) -> jstring {
+    let Some(id) = string(&mut env, &id) else {
+        return std::ptr::null_mut();
+    };
+    let Some((maps, books)) = with(handle, None, |b| b.map_server()) else {
+        return std::ptr::null_mut();
+    };
+    match maps.voices(&books, &id) {
+        Ok(Some(json)) => jstr(&env, &json),
+        Ok(None) => std::ptr::null_mut(),
+        Err(e) => {
+            eprintln!("underscore: voices of {id}: {e}");
+            std::ptr::null_mut()
+        }
+    }
+}
+
+/// Ask the map server to work out who says what in book `id`, from
+/// `chapter` on: the job as JSON, or `{"error": ...}`. Network I/O.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_io_github_ronin11_underscore_Engine_nativeMapServerBuildVoices(
+    mut env: JNIEnv,
+    _this: JObject,
+    handle: jlong,
+    id: JString,
+    chapter: jint,
+) -> jstring {
+    let id = string(&mut env, &id);
+    let answer = |r: Result<String, String>| match r {
+        Ok(text) => jstr(&env, &text),
+        Err(e) => jstr(&env, &serde_json::json!({ "error": e }).to_string()),
+    };
+    let Some(id) = id else {
+        return answer(Err("no book".into()));
+    };
+    let Some((maps, books)) = with(handle, None, |b| b.map_server()) else {
+        return answer(Err("no map server".into()));
+    };
+    let chapter = u32::try_from(chapter).unwrap_or(1).max(1);
+    answer(
+        maps.build_voices(&books, &id, chapter)
+            .map_err(|e| e.to_string()),
+    )
+}

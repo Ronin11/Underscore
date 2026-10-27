@@ -52,6 +52,7 @@ class MainActivity : ServiceActivity() {
     private lateinit var speedTile: Tile
     private lateinit var sleepTile: Tile
     private lateinit var musicTile: Tile
+    private lateinit var textTile: Tile
     private var scrubbing = false
     private val sleepSetup = SleepSetup(this, { service }) { refresh() }
 
@@ -140,7 +141,8 @@ class MainActivity : ServiceActivity() {
             else -> "Chapter ${chapter + 1} of $chapters" + (e.chapterTitle(chapter)?.let { "  ·  $it" } ?: "")
         }
         chapterView.visibility = if (loaded) View.VISIBLE else View.GONE
-        val caption = if (loaded) s.transcribeStatus()?.optString("current")?.takeIf { it.isNotEmpty() && it != "null" } else null
+        val caption = if (!loaded) null else s.subtitles.current(e.positionMs)?.text
+            ?: s.transcribeStatus()?.optString("current")?.takeIf { it.isNotEmpty() && it != "null" }
         captionView.text = caption ?: ""
         captionView.visibility = if (caption == null) View.GONE else View.VISIBLE
 
@@ -354,6 +356,10 @@ class MainActivity : ServiceActivity() {
         menu.show()
     }
 
+    private fun openSubtitles() {
+        startActivity(android.content.Intent(this, SubtitlesActivity::class.java))
+    }
+
     /** The open book's series on the book screen, in reading order. */
     private fun openSeries() {
         val series = service?.speechSeries ?: return
@@ -413,10 +419,12 @@ class MainActivity : ServiceActivity() {
         speedTile = tile("Speed") { speedDialog() }
         sleepTile = tile("Sleep") { sleepMenu(it) }
         musicTile = tile("Music") { musicMenu(it) }
+        textTile = tile("Text") { openSubtitles() }
+        textTile.value.text = "CC"
         bar.addView(
             LinearLayout(this).apply {
                 orientation = LinearLayout.HORIZONTAL
-                for (t in listOf(speedTile, sleepTile, musicTile)) addView(t.view)
+                for (t in listOf(speedTile, sleepTile, musicTile, textTile)) addView(t.view)
             },
             androidx.appcompat.widget.Toolbar.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.MATCH_PARENT, Gravity.END),
         )
@@ -453,6 +461,7 @@ class MainActivity : ServiceActivity() {
             alpha = 0.85f
             maxLines = 4
             setPadding(0, dp(12), 0, 0)
+            setOnClickListener { openSubtitles() }
         }
         val coverSize = minOf(resources.displayMetrics.widthPixels - dp(96), dp(260))
         body.addView(

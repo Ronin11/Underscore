@@ -61,6 +61,12 @@
             android:parentActivityName=".BooksActivity" />
 
         <activity
+            android:name=".SubtitlesActivity"
+            android:exported="false"
+            android:label="Subtitles"
+            android:parentActivityName=".MainActivity" />
+
+        <activity
             android:name=".DebugActivity"
             android:exported="false"
             android:label="Debug"

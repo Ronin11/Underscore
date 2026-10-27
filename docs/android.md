@@ -183,6 +183,28 @@ kept in the app's private files, under `files/maps`, so opening a book
 again brings its map back, offline too. Clearing the map forgets it for
 that book.
 
+## Subtitles
+
+CC on the player, or a tap on the line under the title, opens subtitles:
+the line being read, large, on black, with the two before and the one
+after faded around it. The screen stays on, and the text size is set
+there. `Subtitles.kt` reads the open book's lines from the files the app
+keeps: the voices file when the map server has worked out who says what
+(`docs/map-server.md`), otherwise the transcript, all the narrator's.
+With voices, each speaker's words are in their own color, bold, and
+their name shows above the line; narration stays plain. Speaker colors
+come from a small palette chosen to read on black and to tell apart.
+
+The voices file is fetched when a server book opens, and fetched again
+while the map server is still working them out, so speakers appear
+chapter by chapter. The book screen says how far it has got and asks for
+it for a book that has a map already.
+
+Two settings help a listener who is hard of hearing. "Line being read on
+the lock screen" puts the current line where the chapter usually shows,
+on the lock screen and in the notification. "Voice first" keeps the
+music about 10 dB under its usual level.
+
 ## Transcribing on the phone
 
 Debug, Transcribe on this phone, turns on a transcriber that follows the

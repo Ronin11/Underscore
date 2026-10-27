@@ -32,6 +32,8 @@ class SettingsActivity : ServiceActivity() {
     private lateinit var wifiOnly: SwitchCompat
     private lateinit var autoRemove: SwitchCompat
     private lateinit var makeMaps: SwitchCompat
+    private lateinit var voiceFirst: SwitchCompat
+    private lateinit var lockLine: SwitchCompat
     /** The average book on the phone, in bytes of audio, or 0 before there is one. */
     @Volatile private var bookBytes = 0L
     /** What the download cache holds, measured off the main thread. */
@@ -51,6 +53,8 @@ class SettingsActivity : ServiceActivity() {
         if (!wifiOnly.isPressed) wifiOnly.isChecked = settings.wifiOnly
         if (!autoRemove.isPressed) autoRemove.isChecked = settings.autoRemove
         if (!makeMaps.isPressed) makeMaps.isChecked = settings.makeMaps
+        if (!voiceFirst.isPressed) voiceFirst.isChecked = settings.voiceFirst
+        if (!lockLine.isPressed) lockLine.isChecked = settings.lockScreenLine
         storage.summary = listOfNotNull(s?.keepBusy, storageSummary ?: "Measuring…").joinToString(". ")
     }
 
@@ -279,12 +283,28 @@ class SettingsActivity : ServiceActivity() {
                 addView(musicLevelValue, LinearLayout.LayoutParams(dp(48), ViewGroup.LayoutParams.WRAP_CONTENT))
             },
         )
+        val (voiceRow, voiceSwitch) = switchRow(
+            "Voice first",
+            "Keeps the music well under the narrator, about 10 dB lower, for anyone who finds music under speech hard to follow.",
+        ) { settings.voiceFirst = it }
+        voiceFirst = voiceSwitch
+        list.addView(voiceRow)
         val (makeRow, makeSwitch) = switchRow(
             "Make a map when a book has none",
             "Asks the map server under Connections. Music starts as the first chapter is ready.",
         ) { settings.makeMaps = it }
         makeMaps = makeSwitch
         list.addView(makeRow)
+
+        list.addView(divider())
+        list.addView(heading("Subtitles"))
+        list.addView(row("Subtitles", "Open them with CC on the player, or by tapping the line under the title. Speakers show in color once the map server has worked out who says what.", null).view)
+        val (lockRow, lockSwitch) = switchRow(
+            "Line being read on the lock screen",
+            "The lock screen and notification show the line being read, instead of the chapter.",
+        ) { settings.lockScreenLine = it }
+        lockLine = lockSwitch
+        list.addView(lockRow)
 
         list.addView(divider())
         list.addView(heading("Storage"))
