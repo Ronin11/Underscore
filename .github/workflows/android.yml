@@ -56,6 +56,9 @@ jobs:
           export AR_aarch64_linux_android="$BIN/llvm-ar"
           export CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER="$BIN/aarch64-linux-android26-clang"
           echo "NDK: $NDK_ROOT"
+          # The cache can restore whisper.cpp's CMake build from an older
+          # setup, and CMake then configures on top of it. Start it clean.
+          rm -rf target/aarch64-linux-android/release/build/whisper-rs-sys-*
           cargo build --release --target aarch64-linux-android -p underscore-android
           # whisper.cpp is C++ and links the NDK's shared C++ runtime, so
           # the APK carries it beside ours.
