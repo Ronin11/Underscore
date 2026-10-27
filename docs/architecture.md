@@ -129,6 +129,15 @@ reports when the current cue changes. It is data only; finding tracks and
 feeding the player is the shell's job. `docs/music-map.md` has the format
 and the plan for the tool that writes maps.
 
+### The map server and the worker (`crates/mapserver`, `worker/`)
+
+The map server keeps maps for the books on an Audiobookshelf server, each
+book's default, and a queue of maps to make. A worker on a GPU machine
+makes them: whisper for the transcript, a local model through Ollama for
+scenes and moods, CLAP to match moods to the music library by sound. The
+phone loads a book's default map, or asks for one, and takes each chapter
+as it arrives. `docs/map-server.md` has the details.
+
 ### Output
 
 Android uses an `AudioTrack` owned by a foreground service, fed by a render
@@ -166,9 +175,10 @@ Done:
 Not done:
 
 - The desktop CLI does nothing yet; `cpal` output is not wired.
-- No podcast feeds, no self-hosted sources, no persistence.
-- The CLI does not play maps; only the Android app does. No server
-  backends. No tool writes maps.
+- No podcast feeds.
+- The CLI does not play maps; only the Android app does.
+- Maps are made on the listener's server (`docs/map-server.md`). Not yet
+  run against a real library end to end.
 - No microphone feed. Settings persist; the open book and its position
   do not. No cover art.
 - The resampler is linear interpolation. Fine for speech; music under
@@ -191,10 +201,11 @@ desktop playback because that is where listening happens.
    server such as Navidrome for music. Next: Jellyfin behind the same trait.
 4. **Local desktop playback.** `underscore play <book> <music>` via `cpal`.
    Mostly a developer tool for tuning the engine with real material.
-5. **Map authoring.** `underscore map`: transcript in, map out, with the
-   language model kept to scene segments and candidate picks. Where the
-   transcript is made, phone or desktop, is an open decision; see
-   `docs/music-map.md`.
+5. **Map authoring.** A map server and a GPU worker make maps on the
+   listener's own server, a chapter at a time, with the language model
+   kept to scenes and moods and CLAP choosing the music. See
+   `docs/map-server.md`. Next: run it against a real library, and edit
+   and share maps by hand.
 6. **Podcast RSS.** Subscriptions, episode download, episodes as transition
    events.
 7. **Smarter layering.** VAD, music energy analysis, chapter-aware
@@ -220,3 +231,8 @@ toolchain is pinned in `rust-toolchain.toml`. The Android shell is the one
 place platform code is unavoidable; it is a thin Kotlin layer over a
 hand-written JNI surface in `crates/android`, small enough to read in one
 sitting.
+
+The map worker is the exception, and it is Python: the speech and music
+models it runs are built for Python. It never runs on a listener's
+device and never touches the mix; it reads files to analyse them and
+writes maps.

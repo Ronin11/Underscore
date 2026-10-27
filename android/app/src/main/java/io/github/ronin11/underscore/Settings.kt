@@ -64,6 +64,11 @@ class Settings(context: Context) {
         get() = STORAGE_STEPS_GB[storageStep].takeIf { it >= 0 }?.let { it * 1_000_000_000L }
 
     /** Over the budget, remove the books played longest ago without asking. */
+    /** Ask the map server to make a map for a book that has none. */
+    var makeMaps: Boolean
+        get() = prefs.getBoolean(MAKE_MAPS, true)
+        set(v) = prefs.edit().putBoolean(MAKE_MAPS, v).apply()
+
     var autoRemove: Boolean
         get() = prefs.getBoolean(AUTO_REMOVE, false)
         set(v) = prefs.edit().putBoolean(AUTO_REMOVE, v).apply()
@@ -110,6 +115,7 @@ class Settings(context: Context) {
         private const val STORAGE_STEP = "storage_step"
         private const val WIFI_ONLY = "wifi_only"
         private const val AUTO_REMOVE = "auto_remove"
+        private const val MAKE_MAPS = "make_maps"
         private const val SKIP_BACK = "skip_back_sec"
         private const val SKIP_FORWARD = "skip_forward_sec"
         private const val REWIND = "rewind_on_resume"

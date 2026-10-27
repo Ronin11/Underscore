@@ -31,6 +31,7 @@ class SettingsActivity : ServiceActivity() {
     private lateinit var budgetValue: TextView
     private lateinit var wifiOnly: SwitchCompat
     private lateinit var autoRemove: SwitchCompat
+    private lateinit var makeMaps: SwitchCompat
     /** The average book on the phone, in bytes of audio, or 0 before there is one. */
     @Volatile private var bookBytes = 0L
     /** What the download cache holds, measured off the main thread. */
@@ -49,6 +50,7 @@ class SettingsActivity : ServiceActivity() {
         budgetValue.text = budgetLabel(budget.progress)
         if (!wifiOnly.isPressed) wifiOnly.isChecked = settings.wifiOnly
         if (!autoRemove.isPressed) autoRemove.isChecked = settings.autoRemove
+        if (!makeMaps.isPressed) makeMaps.isChecked = settings.makeMaps
         storage.summary = listOfNotNull(s?.keepBusy, storageSummary ?: "Measuring…").joinToString(". ")
     }
 
@@ -277,6 +279,12 @@ class SettingsActivity : ServiceActivity() {
                 addView(musicLevelValue, LinearLayout.LayoutParams(dp(48), ViewGroup.LayoutParams.WRAP_CONTENT))
             },
         )
+        val (makeRow, makeSwitch) = switchRow(
+            "Make a map when a book has none",
+            "Asks the map server under Connections. Music starts as the first chapter is ready.",
+        ) { settings.makeMaps = it }
+        makeMaps = makeSwitch
+        list.addView(makeRow)
 
         list.addView(divider())
         list.addView(heading("Storage"))

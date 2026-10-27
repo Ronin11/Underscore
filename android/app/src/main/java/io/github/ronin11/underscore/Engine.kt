@@ -120,6 +120,21 @@ class Engine(sampleRate: Int, val channels: Int) : AutoCloseable {
     /** Take [data] as book [key]'s transcript under [dir]. Null, or why not. */
     fun transcribeImport(dir: String, key: String, data: ByteArray): String? = nativeTranscribeImport(h(), dir, key, data)
 
+    /** Use the map server at [url], or none for an empty one. No I/O. */
+    fun mapServerSet(url: String) = nativeMapServerSet(h(), url)
+    /** Null when the map server takes the book server's sign-in, otherwise why not. Network. */
+    fun mapServerCheck(): String? = nativeMapServerCheck(h())
+    /** Book [id]'s maps, default, and job as JSON, or `{"error": ...}`. Network. */
+    fun mapServerBook(id: String): String = nativeMapServerBook(h(), id)
+    /** Map [id] as TOML, or null. Network. */
+    fun mapServerMap(id: String): String? = nativeMapServerMap(h(), id)
+    /** Ask for a map for book [id] from [chapter] on: the job as JSON, or `{"error": ...}`. Network. */
+    fun mapServerBuild(id: String, chapter: Int): String = nativeMapServerBuild(h(), id, chapter)
+    /** Make [map] the map book [id] opens with: JSON, or `{"error": ...}`. Network. */
+    fun mapServerDefault(id: String, map: String): String = nativeMapServerDefault(h(), id, map)
+    /** The map server's transcript of book [id], or null. Network. */
+    fun mapServerTranscript(id: String): ByteArray? = nativeMapServerTranscript(h(), id)
+
     /** Which downloads to drop: JSON in and out, as `keep.rs` describes. Pure and quick. */
     fun storagePlan(ask: String): String = nativeStoragePlan(h(), ask)
     /** Download all of server book [id] into [cacheDir]: `{"files": [...]}` or `{"error": ...}`. Slow. */
@@ -212,6 +227,13 @@ class Engine(sampleRate: Int, val channels: Int) : AutoCloseable {
     private external fun nativeServerCompanion(handle: Long, id: String, name: String): ByteArray?
     private external fun nativeTranscribeImport(handle: Long, dir: String, key: String, data: ByteArray): String?
     private external fun nativeStoragePlan(handle: Long, ask: String): String
+    private external fun nativeMapServerSet(handle: Long, url: String)
+    private external fun nativeMapServerCheck(handle: Long): String?
+    private external fun nativeMapServerBook(handle: Long, id: String): String
+    private external fun nativeMapServerMap(handle: Long, id: String): String?
+    private external fun nativeMapServerBuild(handle: Long, id: String, chapter: Int): String
+    private external fun nativeMapServerDefault(handle: Long, id: String, map: String): String
+    private external fun nativeMapServerTranscript(handle: Long, id: String): ByteArray?
     private external fun nativeServerDownloadBook(handle: Long, id: String, cacheDir: String): String
     private external fun nativeMapFiles(handle: Long, toml: String, cacheDir: String, fetch: Boolean): String
     private external fun nativeRender(handle: Long, out: FloatArray, nowMs: Long): Int

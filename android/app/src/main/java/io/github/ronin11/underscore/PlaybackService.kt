@@ -235,6 +235,7 @@ class PlaybackService : Service() {
             if (transcribing) engine.transcribePosition(engine.positionMs)
             if (downloading) checkDownload()
             watchSleep()
+            watchServerMap()
             mainHandler.postDelayed(this, 1000)
         }
     }
@@ -628,6 +629,7 @@ class PlaybackService : Service() {
             last.getString("key", null)?.let { carryOverMap(it) }
             resumeServer()
             resumeMusicServer()
+            mapServerUrl?.let { engine.mapServerSet(it) }
             val kind = last.getString("kind", null)
             val name = last.getString("name", null)
             val at = last.getLong("positionMs", -1)
@@ -741,6 +743,7 @@ class PlaybackService : Service() {
         Thread({
             val map = engine.serverCompanion(id, SERVER_MAP)?.toString(Charsets.UTF_8)
             val transcript = engine.serverCompanion(id, SERVER_TRANSCRIPT)
+                ?: if (mapServerUrl != null) engine.mapServerTranscript(id) else null
             val problem = transcript?.let { engine.transcribeImport(dir, "abs:$id", it) }
             companions = "map ${map?.let { "${it.length} chars" } ?: "none"}, transcript " +
                 (transcript?.let { "${it.size} bytes, ${problem ?: "taken"}" } ?: "none")
@@ -756,7 +759,224 @@ class PlaybackService : Service() {
                 }
                 map?.let { useServerMap(id, it) }
             }
+            followMapServer(id, hasOwnMap = map != null)
         }, "underscore-companions").start()
+    }
+
+    // The map server: maps for the book server's books, and maps made on
+    // request by a worker, which arrive a chapter at a time.
+
+    private val mapPrefs by lazy { getSharedPreferences("map_server", Context.MODE_PRIVATE) }
+
+    /** The map server's address, or null when there is none. */
+    val mapServerUrl: String? get() = mapPrefs.getString("url", null)
+
+    /** What happened the last time the map server was asked, when it went wrong. */
+    @Volatile var mapServerProblem: String? = null
+
+    data class ServerMap(val id: String, val name: String, val complete: Boolean, val cues: Int, val updated: Long)
+
+    /** A map being made: [done] are chapter numbers from 1. */
+    data class MapJob(val map: String, val state: String, val done: Set<Int>, val total: Int, val message: String) {
+        val active: Boolean get() = state == "queued" || state == "running"
+    }
+
+    data class BookMaps(val book: String, val default: String?, val maps: List<ServerMap>, val job: MapJob?)
+
+    /** What the map server has for the open book. */
+    @Volatile var bookMaps: BookMaps? = null
+
+    /** A book with several maps and no default: the screens ask which. */
+    @Volatile var chooseMapFor: String? = null
+
+    /** The server map loaded: its id, its time, and the chapters its copy had, or null for all. */
+    private data class Loaded(val id: String, val updated: Long, val done: Set<Int>?)
+    private var serverMapLoaded: Loaded? = null
+    private var mapsAskedAt = 0L
+    private var mapsAsking = false
+    @Volatile private var fetchingMap = false
+    private var toldChapter = 0
+    /** The map the listener asked to have made, to switch to once it has a chapter. */
+    private var wantMade = false
+
+    /** Use the map server at [url]; [onDone] gets null or why not. */
+    fun mapServerAdd(url: String, onDone: (String?) -> Unit) {
+        val base = url.trim().trimEnd('/')
+        Thread({
+            engine.mapServerSet(base)
+            val problem = engine.mapServerCheck()
+            if (problem == null) {
+                mapPrefs.edit().putString("url", base).apply()
+                mapServerProblem = null
+            } else {
+                engine.mapServerSet(mapServerUrl ?: "")
+            }
+            mainHandler.post {
+                onDone(problem)
+                last.getString("id", null)?.takeIf { problem == null && last.getString("kind", null) == "server" }
+                    ?.let { id -> Thread({ followMapServer(id, hasOwnMap = mapName != null) }, "underscore-maps").start() }
+            }
+        }, "underscore-map-server").start()
+    }
+
+    fun mapServerForget() {
+        mapPrefs.edit().clear().apply()
+        engine.mapServerSet("")
+        bookMaps = null
+        chooseMapFor = null
+        mapServerProblem = null
+    }
+
+    /** The chapter the listener is in, from 1, as the worker counts: half hours in a book without marks. */
+    private fun chapterNumber(): Int =
+        if (engine.chapterCount > 0) engine.currentChapter + 1 else (engine.positionMs / (30 * 60 * 1000L)).toInt() + 1
+
+    /** Ask the map server about book [id]. Network: not on the main thread. */
+    private fun askBookMaps(id: String): BookMaps? {
+        val v = runCatching { org.json.JSONObject(engine.mapServerBook(id)) }.getOrNull() ?: return null
+        if (v.has("error")) {
+            mapServerProblem = v.getString("error")
+            return null
+        }
+        mapServerProblem = null
+        val list = v.optJSONArray("maps") ?: org.json.JSONArray()
+        val maps = (0 until list.length()).map { i ->
+            val m = list.getJSONObject(i)
+            ServerMap(m.getString("id"), m.optString("name"), m.optBoolean("complete", true), m.optInt("cues"), m.optLong("updated"))
+        }
+        val job = v.optJSONObject("job")?.let { j ->
+            val d = j.optJSONArray("done") ?: org.json.JSONArray()
+            MapJob(j.optString("map"), j.optString("state"), (0 until d.length()).map { d.getInt(it) }.toSet(), j.optInt("total"), j.optString("message"))
+        }
+        return BookMaps(id, v.optString("default").takeIf { v.has("default") && !v.isNull("default") }, maps, job)
+    }
+
+    /**
+     * What the map server has for server book [id], acted on: its default
+     * map, or its only map, is loaded; with several and no default the
+     * screens ask which; with none, and none beside the book, one is
+     * asked for, starting from the listener's chapter. Network: called
+     * from a background thread.
+     */
+    private fun followMapServer(id: String, hasOwnMap: Boolean) {
+        if (mapServerUrl == null) return
+        val bm = askBookMaps(id) ?: return
+        mapsAskedAt = now()
+        mainHandler.post {
+            if (last.getString("id", null) != id) return@post
+            bookMaps = bm
+            serverMapLoaded = null
+            toldChapter = 0
+            val pick = bm.default ?: bm.maps.singleOrNull()?.id
+            when {
+                pick != null -> loadServerMap(bm, pick)
+                bm.maps.size > 1 -> chooseMapFor = id
+                hasOwnMap || bm.job?.active == true -> {}
+                settings.makeMaps -> makeMap()
+            }
+        }
+    }
+
+    /** Fetch map [mapId] and follow it. */
+    private fun loadServerMap(bm: BookMaps, mapId: String) {
+        val info = bm.maps.firstOrNull { it.id == mapId } ?: return
+        val done = if (info.complete) null else bm.job?.takeIf { it.map == mapId }?.done ?: emptySet()
+        if (fetchingMap) return
+        fetchingMap = true
+        Thread({
+            val toml = engine.mapServerMap(mapId)
+            mainHandler.post {
+                fetchingMap = false
+                if (toml == null || last.getString("id", null) != bm.book) return@post
+                if (!engine.hasMusicServer && musicDir == null) return@post
+                // Noted before it loads, so a map that will not load is not tried every second.
+                serverMapLoaded = Loaded(mapId, info.updated, done)
+                loadMap(toml, info.name) { problem ->
+                    if (problem != null) toast("${info.name}: $problem")
+                }
+            }
+        }, "underscore-map-fetch").start()
+    }
+
+    /** The listener chose [mapId] for the open book: make it the default and follow it. */
+    fun chooseMap(mapId: String) {
+        val bm = bookMaps ?: return
+        chooseMapFor = null
+        Thread({ engine.mapServerDefault(bm.book, mapId) }, "underscore-map-default").start()
+        bookMaps = bm.copy(default = mapId)
+        loadServerMap(bm, mapId)
+    }
+
+    /** The listener asked for a new map of the open book: switch to it once it has a chapter. */
+    fun makeNewMap() {
+        wantMade = true
+        makeMap()
+    }
+
+    /** Ask the map server for a new map of the open book, from the listener's chapter on. */
+    private fun makeMap() {
+        val id = last.getString("id", null)?.takeIf { last.getString("kind", null) == "server" } ?: return
+        val chapter = chapterNumber()
+        toldChapter = chapter
+        Thread({
+            val v = runCatching { org.json.JSONObject(engine.mapServerBuild(id, chapter)) }.getOrNull()
+            val problem = v?.optString("error")?.takeIf { it.isNotEmpty() } ?: if (v == null) "no answer" else null
+            mapServerProblem = problem
+            if (problem != null) mainHandler.post { toast("Making a map: $problem") }
+            mapsAskedAt = 0
+        }, "underscore-map-build").start()
+    }
+
+    /**
+     * On the tick, while a map is being made for the open book: ask the
+     * server every minute how far it is, tell it when the listener has
+     * moved to a chapter it has not reached, and take the newer map when
+     * the listener reaches a chapter the loaded copy lacks. Taking it
+     * only then keeps the music playing now from starting over.
+     */
+    private fun watchServerMap() {
+        val bm = bookMaps ?: return
+        if (last.getString("id", null) != bm.book) return
+        val loaded = serverMapLoaded
+        val building = bm.job?.active == true
+        if (!building && !wantMade && (loaded == null || loaded.done == null)) return
+        if (!mapsAsking && now() - mapsAskedAt > MAPS_EVERY_MS) {
+            mapsAsking = true
+            Thread({
+                val fresh = askBookMaps(bm.book)
+                mapsAskedAt = now()
+                mapsAsking = false
+                if (fresh != null) mainHandler.post { if (last.getString("id", null) == fresh.book) bookMaps = fresh }
+            }, "underscore-maps-ask").start()
+        }
+        val chapter = chapterNumber()
+        val job = bm.job
+        if (building && job != null && chapter !in job.done && chapter != toldChapter && engine.isPlaying) {
+            makeMap()
+        }
+        if (wantMade && job != null && bm.maps.any { it.id == job.map } && loaded?.id != job.map && !mapLoading) {
+            wantMade = false
+            chooseMap(job.map)
+            return
+        }
+        val pick = bm.default ?: bm.maps.singleOrNull()?.id ?: return
+        val info = bm.maps.firstOrNull { it.id == pick } ?: return
+        when {
+            mapLoading || fetchingMap -> {}
+            loaded == null && mapName == null -> loadServerMap(bm, pick)
+            loaded != null && loaded.id == pick && loaded.done != null && chapter !in loaded.done &&
+                info.updated > loaded.updated && (info.complete || job?.done?.contains(chapter) == true) ->
+                loadServerMap(bm, pick)
+        }
+    }
+
+    /** One line on the map being made for the open book, or null. */
+    fun makingMapLine(): String? {
+        val bm = bookMaps ?: return null
+        if (last.getString("id", null) != bm.book) return null
+        val job = bm.job?.takeIf { it.active } ?: return null
+        val of = if (job.total > 0) "${job.done.size} of ${job.total} chapters" else "starting"
+        return "Making a map: $of. ${job.message}"
     }
 
     /** Load the server's map for [id], unless the same map is loaded. Waits out a load in progress. */
@@ -1645,6 +1865,8 @@ class PlaybackService : Service() {
         /** Kept beside a book on the server: its music map, and a finished transcript. */
         const val SERVER_MAP = "underscore.toml"
         const val SERVER_TRANSCRIPT = "underscore.transcript.json"
+        /** How often to ask how a map being made is coming along. */
+        const val MAPS_EVERY_MS = 60_000L
         private const val ACTIONS =
             PlaybackStateCompat.ACTION_PLAY or
                 PlaybackStateCompat.ACTION_PAUSE or

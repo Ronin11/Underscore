@@ -24,7 +24,9 @@ use jni::objects::{JByteArray, JFloatArray, JObject, JString};
 use jni::sys::{JNI_FALSE, JNI_TRUE, jboolean, jbyteArray, jfloat, jint, jlong, jstring};
 
 use underscore_decode::Chapter;
-use underscore_library::{Cache, Credentials, Download, ItemId, Library, Opened, SubsonicLogin};
+use underscore_library::{
+    Cache, Credentials, Download, ItemId, Library, MapServer, Opened, SubsonicLogin,
+};
 
 use crate::{Bridge, hint_for_mime};
 
@@ -1192,5 +1194,161 @@ pub extern "system" fn Java_io_github_ronin11_underscore_Engine_nativeMapFiles(
             answer(serde_json::json!({ "files": m.files, "failed": m.failed, "error": m.error }))
         }
         Err(e) => answer(serde_json::json!({ "error": e })),
+    }
+}
+
+/// Use the map server at `url`, or none for an empty one. No I/O.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_io_github_ronin11_underscore_Engine_nativeMapServerSet(
+    mut env: JNIEnv,
+    _this: JObject,
+    handle: jlong,
+    url: JString,
+) {
+    let url = string(&mut env, &url).filter(|u| !u.trim().is_empty());
+    with(handle, (), |b| {
+        b.set_map_server(url.map(|u| Arc::new(MapServer::new(&u))));
+    });
+}
+
+/// Ask the map server whether it takes the book server's sign-in. Null
+/// when it does, otherwise why not. Network I/O: a background thread.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_io_github_ronin11_underscore_Engine_nativeMapServerCheck(
+    env: JNIEnv,
+    _this: JObject,
+    handle: jlong,
+) -> jstring {
+    // Only the clients come out from under the lock; the call runs outside it.
+    let Some((maps, books)) = with(handle, None, |b| b.map_server()) else {
+        return jstr(&env, "sign in to Audiobookshelf first");
+    };
+    match maps.check(&books) {
+        Ok(_) => std::ptr::null_mut(),
+        Err(e) => jstr(&env, &e.to_string()),
+    }
+}
+
+/// Book `id`'s maps, default, and job, as the map server's JSON, or
+/// `{"error": ...}`. Network I/O: a background thread.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_io_github_ronin11_underscore_Engine_nativeMapServerBook(
+    mut env: JNIEnv,
+    _this: JObject,
+    handle: jlong,
+    id: JString,
+) -> jstring {
+    let id = string(&mut env, &id);
+    let answer = |r: Result<String, String>| match r {
+        Ok(text) => jstr(&env, &text),
+        Err(e) => jstr(&env, &serde_json::json!({ "error": e }).to_string()),
+    };
+    let Some(id) = id else {
+        return answer(Err("no book".into()));
+    };
+    let Some((maps, books)) = with(handle, None, |b| b.map_server()) else {
+        return answer(Err("no map server".into()));
+    };
+    answer(maps.book(&books, &id).map_err(|e| e.to_string()))
+}
+
+/// Map `id` as TOML, or null when it cannot be had. Network I/O.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_io_github_ronin11_underscore_Engine_nativeMapServerMap(
+    mut env: JNIEnv,
+    _this: JObject,
+    handle: jlong,
+    id: JString,
+) -> jstring {
+    let Some(id) = string(&mut env, &id) else {
+        return std::ptr::null_mut();
+    };
+    let Some((maps, books)) = with(handle, None, |b| b.map_server()) else {
+        return std::ptr::null_mut();
+    };
+    match maps.map(&books, &id) {
+        Ok(text) => jstr(&env, &text),
+        Err(e) => {
+            eprintln!("underscore: map {id}: {e}");
+            std::ptr::null_mut()
+        }
+    }
+}
+
+/// Ask for a map for book `id`, built from `chapter` on: the job as JSON,
+/// or `{"error": ...}`. Network I/O.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_io_github_ronin11_underscore_Engine_nativeMapServerBuild(
+    mut env: JNIEnv,
+    _this: JObject,
+    handle: jlong,
+    id: JString,
+    chapter: jint,
+) -> jstring {
+    let id = string(&mut env, &id);
+    let answer = |r: Result<String, String>| match r {
+        Ok(text) => jstr(&env, &text),
+        Err(e) => jstr(&env, &serde_json::json!({ "error": e }).to_string()),
+    };
+    let Some(id) = id else {
+        return answer(Err("no book".into()));
+    };
+    let Some((maps, books)) = with(handle, None, |b| b.map_server()) else {
+        return answer(Err("no map server".into()));
+    };
+    let chapter = u32::try_from(chapter).unwrap_or(1).max(1);
+    answer(maps.build(&books, &id, chapter).map_err(|e| e.to_string()))
+}
+
+/// Make map `map` the one book `id` opens with: the book's maps as JSON,
+/// or `{"error": ...}`. Network I/O.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_io_github_ronin11_underscore_Engine_nativeMapServerDefault(
+    mut env: JNIEnv,
+    _this: JObject,
+    handle: jlong,
+    id: JString,
+    map: JString,
+) -> jstring {
+    let args = (string(&mut env, &id), string(&mut env, &map));
+    let answer = |r: Result<String, String>| match r {
+        Ok(text) => jstr(&env, &text),
+        Err(e) => jstr(&env, &serde_json::json!({ "error": e }).to_string()),
+    };
+    let (Some(id), Some(map)) = args else {
+        return answer(Err("book and map are both needed".into()));
+    };
+    let Some((maps, books)) = with(handle, None, |b| b.map_server()) else {
+        return answer(Err("no map server".into()));
+    };
+    answer(
+        maps.set_default(&books, &id, &map)
+            .map_err(|e| e.to_string()),
+    )
+}
+
+/// The transcript the map server made of book `id`, or null. Network I/O.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_io_github_ronin11_underscore_Engine_nativeMapServerTranscript(
+    mut env: JNIEnv,
+    _this: JObject,
+    handle: jlong,
+    id: JString,
+) -> jbyteArray {
+    let Some(id) = string(&mut env, &id) else {
+        return std::ptr::null_mut();
+    };
+    let Some((maps, books)) = with(handle, None, |b| b.map_server()) else {
+        return std::ptr::null_mut();
+    };
+    match maps.transcript(&books, &id) {
+        Ok(Some(bytes)) => env
+            .byte_array_from_slice(&bytes)
+            .map_or(std::ptr::null_mut(), JByteArray::into_raw),
+        Ok(None) => std::ptr::null_mut(),
+        Err(e) => {
+            eprintln!("underscore: transcript of {id} from the map server: {e}");
+            std::ptr::null_mut()
+        }
     }
 }

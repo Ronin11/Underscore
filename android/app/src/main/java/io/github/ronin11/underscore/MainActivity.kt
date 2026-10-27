@@ -174,6 +174,7 @@ class MainActivity : ServiceActivity() {
         val music = buildString {
             if (s.mapName != null) append("Map: ${s.mapName}  ·  ${e.mapStatus}")
             else if (s.musicName != null) append("Music: ${s.musicName}")
+            s.makingMapLine()?.let { if (isNotEmpty()) append("\n"); append(it) }
         }
         musicLine.text = music
         musicLine.visibility = if (music.isEmpty()) View.GONE else View.VISIBLE
@@ -337,6 +338,17 @@ class MainActivity : ServiceActivity() {
         map.add("Clear the map").apply {
             isEnabled = e.hasMap
             setOnMenuItemClickListener { s.clearMap(); refresh(); true }
+        }
+        if (s.mapServerUrl != null && s.bookFromServer) {
+            map.add("Maps for this book…").setOnMenuItemClickListener { mapsDialog(); true }
+            map.add("Make a new map").apply {
+                isEnabled = s.bookMaps?.job?.active != true
+                setOnMenuItemClickListener {
+                    s.makeNewMap()
+                    toast("Asked the map server. Music starts as the first chapter is ready.")
+                    true
+                }
+            }
         }
         map.add(e.mapStatus).isEnabled = false
         menu.show()

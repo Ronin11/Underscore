@@ -46,6 +46,8 @@ abstract class ServiceActivity : AppCompatActivity() {
     private companion object {
         /** The fill already asked about, across screens. */
         var askedFull: PlaybackService.Full? = null
+        /** The book whose maps were last offered, so the question is asked once. */
+        var askedMaps: String? = null
     }
 
     /** The tab this screen is, or null for a screen with no tabs, such as Debug. */
@@ -71,6 +73,7 @@ abstract class ServiceActivity : AppCompatActivity() {
     private val tick = object : Runnable {
         override fun run() {
             checkFull()
+            checkMaps()
             refresh()
             ui.postDelayed(this, 500)
         }
@@ -193,6 +196,39 @@ abstract class ServiceActivity : AppCompatActivity() {
      * room come checked. Asked once per time it fills, on whichever screen
      * is in front.
      */
+    /** A book with several maps and no default: ask which, once. */
+    private fun checkMaps() {
+        val s = service ?: return
+        val book = s.chooseMapFor ?: return
+        if (book == askedMaps) return
+        askedMaps = book
+        mapsDialog()
+    }
+
+    /** The open book's maps from the map server; choosing one makes it the book's default. */
+    protected fun mapsDialog() {
+        val s = service ?: return
+        val bm = s.bookMaps
+        if (bm == null || bm.maps.isEmpty()) {
+            toast(if (s.mapServerUrl == null) "Add a map server under Connections first" else "The map server has no maps for this book yet")
+            return
+        }
+        val labels = bm.maps.map { m ->
+            val note = if (m.complete) "${m.cues} cues" else "still being made"
+            "${m.name}\n$note"
+        }.toTypedArray()
+        val current = bm.maps.indexOfFirst { it.id == bm.default }
+        AlertDialog.Builder(this)
+            .setTitle("Maps for this book")
+            .setSingleChoiceItems(labels, current) { d, which ->
+                s.chooseMap(bm.maps[which].id)
+                d.dismiss()
+                refresh()
+            }
+            .setNegativeButton("Not now") { _, _ -> s.chooseMapFor = null }
+            .show()
+    }
+
     private fun checkFull() {
         val s = service ?: return
         val full = s.storageFull ?: return

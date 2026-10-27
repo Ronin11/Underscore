@@ -49,14 +49,20 @@ crates/decode   underscore-decode: files in (MP3, M4A/M4B, FLAC, Ogg, WAV), engi
 crates/map      underscore-map: music maps, which music under which chapter. Data only.
 crates/library  underscore-library: the Library trait, local folders, the per-stream
                 cache, and the conductor that plays a map.
+crates/mapserver underscore-maps: keeps maps for an Audiobookshelf server's books,
+                and the queue of maps for the worker to make.
 crates/android  underscore-android: the JNI bridge the Kotlin app calls.
 crates/cli      underscore: developer command line. Scans folders, checks maps.
 android/        the Android app: a Kotlin shell over the engine.
+worker/         the map worker (Python): transcript, scenes, and music by sound, on
+                the listener's own GPU.
+deploy/         how to run the map server and the worker.
 docs/           architecture.md (design), legal.md (why the rules are the rules),
-                music-map.md (the map format and the tool that will write it)
+                music-map.md (the map format), map-server.md (how maps get made)
 ```
 
-Everything is Rust. The engine is kept free of platform code so the same
+Everything is Rust except the map worker, which runs speech and music
+models that live in Python, on the listener's server. The engine is kept free of platform code so the same
 crate can sit under a desktop binary now and mobile shells later.
 
 ## Development

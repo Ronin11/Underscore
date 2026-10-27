@@ -1,0 +1,14 @@
+# A systemd user service. Install with deploy/worker/install.sh.
+[Unit]
+Description=underscore map worker
+After=network-online.target
+
+[Service]
+EnvironmentFile=%h/.config/underscore/worker.env
+ExecStart=%h/miniconda3/envs/underscore-worker/bin/python -m underscore_worker
+WorkingDirectory=%h/underscore/worker
+Restart=on-failure
+RestartSec=30
+
+[Install]
+WantedBy=default.target

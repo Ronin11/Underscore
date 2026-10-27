@@ -22,6 +22,7 @@ pub mod cache;
 pub mod conductor;
 pub mod keep;
 pub mod local;
+pub mod maps;
 pub mod stream;
 pub mod subsonic;
 
@@ -35,6 +36,7 @@ pub use abs::{Audiobookshelf, Credentials, OpenIdStart, Opened, ShelfBook};
 pub use cache::Cache;
 pub use conductor::{Conductor, Direction, Resolution};
 pub use local::LocalLibrary;
+pub use maps::MapServer;
 pub use stream::{Download, StreamReader};
 pub use subsonic::{Subsonic, SubsonicLogin};
 

@@ -31,6 +31,7 @@ class ConnectionsActivity : ServiceActivity() {
     private val sleepSetup = SleepSetup(this, { service }) { refresh() }
     private lateinit var books: LinearLayout
     private lateinit var music: LinearLayout
+    private lateinit var mapsSection: LinearLayout
     private lateinit var sleep: LinearLayout
     /** What the sections were last built from, so a tick only rebuilds when it changes. */
     private var built: String? = null
@@ -57,11 +58,17 @@ class ConnectionsActivity : ServiceActivity() {
         val s = service
         val setUp = Sleep.sources.filter { settings.sleepSetUp(it.key) }
         val shape = listOf(
-            s?.serverUrl != null, s?.musicServerUrl != null, settings.musicDir != null,
+            s?.serverUrl != null, s?.musicServerUrl != null, settings.musicDir != null, s?.mapServerUrl != null,
         ).joinToString() + setUp.joinToString { it.key }
         if (shape != built) {
             built = shape
-            build(s?.serverUrl != null, s?.musicServerUrl != null, settings.musicDir != null, setUp)
+            build(s?.serverUrl != null, s?.musicServerUrl != null, settings.musicDir != null, s?.mapServerUrl != null, setUp)
+        }
+        rows["maps"]?.summary = when {
+            s == null -> "Starting…"
+            s.serverUrl == null -> "${s.mapServerUrl}. Signs in through Audiobookshelf, so add that too."
+            s.mapServerProblem != null -> "${s.mapServerUrl}: ${s.mapServerProblem}"
+            else -> "${s.mapServerUrl}. Maps for your books, made when a book has none."
         }
         rows["server"]?.summary = when {
             s == null -> "Starting…"
@@ -86,7 +93,7 @@ class ConnectionsActivity : ServiceActivity() {
     }
 
     /** Fill each section with what is added, or an Add row when it is empty. */
-    private fun build(server: Boolean, musicServer: Boolean, folder: Boolean, setUp: List<SleepSource>) {
+    private fun build(server: Boolean, musicServer: Boolean, folder: Boolean, mapServer: Boolean, setUp: List<SleepSource>) {
         rows.clear()
         books.removeAllViews()
         if (server) {
@@ -100,6 +107,12 @@ class ConnectionsActivity : ServiceActivity() {
         if (!musicServer && !folder) {
             music.addView(addRow("Add a music server") { musicServerDialog() })
             music.addView(addRow("Add a music folder on this phone") { pickMusicFolder.launch(null) })
+        }
+        mapsSection.removeAllViews()
+        if (mapServer) {
+            mapsSection.addView(keep("maps", row("Map server", null) { mapServerDialog() }))
+        } else {
+            mapsSection.addView(addRow("Add a map server") { mapServerDialog() })
         }
         sleep.removeAllViews()
         for (source in setUp) sleep.addView(keep("sleep:${source.key}", row(source.title, null) { sleepSetup.auto() }))
@@ -148,7 +161,11 @@ class ConnectionsActivity : ServiceActivity() {
                 { pickMusicFolder.launch(null) },
             ),
             Kind("Sleep source", "The watch, this phone, or another app tells the player you fell asleep.", null) { sleepSetup.add() },
-            Kind("Map server", "Maps for your books from a server that collects them.", "Not built yet.", null),
+            Kind(
+                "Map server", "Keeps maps for your books, and makes one when a book has none.",
+                if (s?.mapServerUrl != null) "One for now. Remove the one you have first." else null,
+                { mapServerDialog() }.takeIf { s?.mapServerUrl == null },
+            ),
         )
         val list = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -180,6 +197,43 @@ class ConnectionsActivity : ServiceActivity() {
             )
         }
         dialog.show()
+    }
+
+    /** Add the map server by its address, or remove the one there is. */
+    private fun mapServerDialog() {
+        val s = service ?: return
+        val current = s.mapServerUrl
+        if (current != null) {
+            AlertDialog.Builder(this)
+                .setTitle("Map server")
+                .setMessage(current)
+                .setPositiveButton("Remove") { _, _ -> s.mapServerForget(); refresh() }
+                .setNegativeButton("Close", null)
+                .show()
+            return
+        }
+        val url = android.widget.EditText(this).apply {
+            hint = "Map server address"
+            setText("https://")
+            inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_URI
+        }
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(16), dp(8), dp(16), 0)
+            addView(url)
+        }
+        AlertDialog.Builder(this)
+            .setTitle("Map server")
+            .setMessage("Your own underscore map server. It signs in with your Audiobookshelf account, so it needs only its address.")
+            .setView(box)
+            .setPositiveButton("Add") { _, _ ->
+                s.mapServerAdd(url.text.toString()) { problem ->
+                    toast(problem ?: "Added")
+                    refresh()
+                }
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
     }
 
     private fun folderDialog() {
@@ -235,12 +289,14 @@ class ConnectionsActivity : ServiceActivity() {
 
         books = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         music = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        mapsSection = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         sleep = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         list.addView(heading("Books"))
         list.addView(books)
         list.addView(divider())
         list.addView(heading("Music for maps"))
         list.addView(music)
+        list.addView(mapsSection)
         list.addView(divider())
         list.addView(heading("Sleep"))
         list.addView(sleep)

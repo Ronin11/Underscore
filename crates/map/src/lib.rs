@@ -33,6 +33,21 @@ pub const VERSION: u32 = 1;
 pub struct Map {
     /// Format version. Always [`VERSION`].
     pub version: u32,
+    /// This map's own name for itself, chosen once and kept through every
+    /// edit, so a book can point at a map wherever the file ends up. A map
+    /// server gives one to a map that has none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+    /// What to call it in a list of maps for the same book.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// The `id` of the map this one was copied from and changed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub based_on: Option<String>,
+    /// False while a map is still being written, chapter by chapter. The
+    /// chapters not reached yet have no cues, so they play without music.
+    #[serde(default = "yes", skip_serializing_if = "is_yes")]
+    pub complete: bool,
     /// Which book this is for.
     #[serde(default, skip_serializing_if = "Book::is_empty")]
     pub book: Book,
@@ -67,6 +82,15 @@ pub struct Book {
     /// Running time of the recording the map was written against.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub duration: Option<Time>,
+}
+
+fn yes() -> bool {
+    true
+}
+
+#[allow(clippy::trivially_copy_pass_by_ref)] // serde's skip_serializing_if passes a reference
+fn is_yes(v: &bool) -> bool {
+    *v
 }
 
 impl Book {
@@ -287,6 +311,10 @@ impl Map {
     pub fn new() -> Self {
         Self {
             version: VERSION,
+            id: None,
+            name: None,
+            based_on: None,
+            complete: true,
             book: Book::default(),
             defaults: Defaults::default(),
             cues: Vec::new(),
@@ -475,6 +503,24 @@ fade_in = "15"
                 offset: Time::secs(250.0)
             }
         );
+    }
+
+    #[test]
+    fn identity_is_optional_and_complete_by_default() {
+        let m = Map::parse("version = 1").unwrap();
+        assert_eq!(m.id, None);
+        assert!(m.complete);
+        let m = Map::parse(
+            "version = 1\nid = \"8f3c\"\nname = \"Score\"\nbased_on = \"a91d\"\ncomplete = false",
+        )
+        .unwrap();
+        assert_eq!(m.id.as_deref(), Some("8f3c"));
+        assert_eq!(m.name.as_deref(), Some("Score"));
+        assert_eq!(m.based_on.as_deref(), Some("a91d"));
+        assert!(!m.complete);
+        let back = m.to_toml().unwrap();
+        assert!(back.contains("complete = false"));
+        assert!(!Map::new().to_toml().unwrap().contains("complete"));
     }
 
     #[test]

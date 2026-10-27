@@ -25,8 +25,8 @@ use std::time::Duration;
 use underscore_core::{Chain, LayerId, Player, PlayerConfig, RewindPolicy, SleepTimer, Source};
 use underscore_decode::{Chapter, FileSource, MediaSource, probe, probe_path};
 use underscore_library::{
-    Audiobookshelf, Cache, Credentials, Download, ItemId, Library, LocalLibrary, OpenIdStart,
-    Opened, Role, StreamReader, Subsonic, SubsonicLogin, conductor,
+    Audiobookshelf, Cache, Credentials, Download, ItemId, Library, LocalLibrary, MapServer,
+    OpenIdStart, Opened, Role, StreamReader, Subsonic, SubsonicLogin, conductor,
 };
 use underscore_map::Map;
 
@@ -78,6 +78,8 @@ pub struct Bridge {
     /// The music server (Navidrome or any Subsonic-compatible one), once
     /// signed in. Maps play from it instead of a folder when it is set.
     music_server: Option<Arc<Subsonic>>,
+    /// The map server: maps for the book server's books, built on request.
+    map_server: Option<Arc<MapServer>>,
     /// A single sign-on waiting for the browser to come back.
     openid: Option<OpenIdStart>,
 }
@@ -122,6 +124,7 @@ impl Bridge {
             book_file: None,
             downloads: Vec::new(),
             music_server: None,
+            map_server: None,
             openid: None,
         }
     }
@@ -497,6 +500,18 @@ impl Bridge {
     /// Use, or forget, a music server.
     pub fn set_music_server(&mut self, server: Option<Arc<Subsonic>>) {
         self.music_server = server;
+    }
+
+    /// Use the map server at an address, or none. No I/O.
+    pub fn set_map_server(&mut self, server: Option<Arc<MapServer>>) {
+        self.map_server = server;
+    }
+
+    /// The map server and the book server it signs in through, shared so
+    /// callers can talk to them off the lock. None unless both are set.
+    #[must_use]
+    pub fn map_server(&self) -> Option<(Arc<MapServer>, Arc<Audiobookshelf>)> {
+        Some((self.map_server.clone()?, self.server.clone()?))
     }
 
     /// The music server in use, shared so callers can talk to it off the lock.

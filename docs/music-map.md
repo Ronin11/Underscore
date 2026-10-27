@@ -66,6 +66,15 @@ vibe = ["sparse", "slow", "piano"]
 fade_in = "15"
 ```
 
+Before the tables, a map can say who it is:
+
+| Field      | Meaning                                                         |
+|------------|-----------------------------------------------------------------|
+| `id`       | The map's own name for itself, chosen once and kept through every edit, so a book can point at a map wherever the file is. A map server gives one to a map without. |
+| `name`     | What to call it in a list of a book's maps.                     |
+| `based_on` | The `id` of the map this one was copied from and changed.       |
+| `complete` | `false` while a map is still being made, chapter by chapter. Chapters not reached yet have no cues and play without music. Absent means `true`. |
+
 Times are written as people write them: `4:10`, `1:02:03.5`, or a bare
 number of seconds. Chapters count from one.
 
@@ -138,56 +147,17 @@ is:
    songs, more work for alignment, and most ebooks are locked. Rule two
    means locked ones are never touched, so this stays optional.
 
-## Where the transcript is made: an open decision
+## Where maps are made
 
-The first draft said the transcript runs on a desktop or the server, not
-the phone, because Whisper on a laptop does about ten hours of audio in
-an hour and a phone cannot keep that up. Measured against the phone that
-is still true: whisper.cpp with the tiny or base model runs a few times
-faster than real time on a flagship and throttles long before a book is
-done, and those small models mangle names, which are what a map wants.
+On the listener's server, settled once the pieces existed: a map server
+beside Audiobookshelf, and a worker on a machine with a GPU that
+transcribes the book with whisper, asks a local model for the scenes, and
+matches each scene's mood to the music library by sound with CLAP. It
+makes a map a chapter at a time, from where the listener is, and the
+phone plays each chapter as it arrives. `docs/map-server.md` has the
+details.
 
-The phone has a better engine already installed. Since Android 13 the
-system speech recognizer takes audio from a file descriptor instead of
-the microphone, and since Android 14 it returns word timestamps. On a
-Pixel that runs on the Tensor chip many times faster than real time,
-with the full-size model and no bundled weights. It is not on every
-phone: reliable on Pixels and most phones with Google's speech services,
-absent on some others.
-
-That makes the transcript cheap where the listening happens, and the
-language-model step is a network call from anywhere. So there are three
-places the map tool could live, and the choice has to be made before
-the tool is written:
-
-- **In the app.** Transcribe on the device, call the model, write the
-  map next to the book. The best experience on a Pixel. Needs a model
-  key in the app, and a fallback for phones without the recognizer.
-- **In the CLI, on a desktop.** Whisper or the same recognizer's desktop
-  cousin, then the model. Works for everyone with a computer, needs the
-  book copied over, and the map copied back.
-- **On the listener's server.** Audiobookshelf already holds the book;
-  a job there could transcribe once for every device. Only helps the
-  self-hosting users, and that backend is not written yet.
-
-The likely answer is the first two sharing one Rust core: the transcript
-format, the segmenter prompt, and the resolver live in a crate, and the
-app and the CLI each supply a transcript source and a model client.
-Nothing in this choice touches the three rules: the transcript is a
-private copy of a file the listener owns, the map is still only data, and
-the mix is never involved.
-
-## The sidecar tool
-
-`underscore map` in the CLI crate, planned. It takes a book and a library
-and writes a map. Two stages, so the output stays checkable:
-
-1. The transcript, in chapter-sized chunks, goes to a language model and
-   scene segments come back: start, end, mood tags, intensity, explicit
-   song or artist mentions, and places that want silence.
-2. A plain resolver matches those against the library's inventory. The
-   model is only asked to pick among a short list of candidates for each
-   cue, never to browse the whole catalog.
-
-A hand-written map must work with no model at all. That is also how the
-format is tested.
+The two stages above are kept apart there too. The model is asked for
+scenes and moods, never to browse the catalog; a plain matcher picks the
+music. A hand-written map works with no model at all, and the map server
+takes those as well.

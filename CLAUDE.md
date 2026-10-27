@@ -8,7 +8,9 @@ change. In particular:
 - Never add a dependency, feature, or doc link that decrypts or strips DRM.
 - Never add a Spotify, Apple Music, or YouTube Music SDK or API client.
 
-`docs/legal.md` explains why. `docs/architecture.md` has the layout, where
+`docs/legal.md` explains why. The map worker decodes the listener's own
+files only to analyse them; it must never write audio, and songs it
+downloads to hear are deleted once embedded. `docs/architecture.md` has the layout, where
 things stand, and what is next. `docs/android.md` covers building and
 installing the app. `docs/music-map.md` is the map format: what plays under
 which stretch of a book, as data, never as audio.
@@ -38,6 +40,16 @@ crates/android   Bridge (plain Rust over Player), follow.rs (the map worker
                  on playback and writes a transcript per book), and jni.rs
                  (JNI exports).
 crates/cli       `underscore` binary. `scan` and `map check`; no playback yet.
+crates/mapserver `underscore-maps`: maps for an Audiobookshelf server's books,
+                 each book's default, the queue of maps to make, and the
+                 worker's transcripts. Signs phones in through
+                 Audiobookshelf. Data only; it never sees audio.
+worker/          The map worker, Python, on a GPU machine: whisper, a local
+                 model through Ollama for scenes, CLAP to match moods to the
+                 music library. `docs/map-server.md`. Its test writes
+                 `worker/tests/sample-map.toml`, which a Rust test parses.
+deploy/          Dockerfile and compose for the map server; conda setup and
+                 a systemd user unit for the worker.
 android/         Gradle project. Engine.kt (JNI wrapper), PlaybackService.kt
                  (foreground service, AudioTrack render thread, media session,
                  audio focus), Settings.kt (the preferences the service applies
@@ -92,7 +104,8 @@ cargo test --workspace --all-features
 cargo check --target aarch64-linux-android -p underscore-android --release
 ```
 
-CI runs the first three and fails on any warning. The workspace lints are
+CI runs the first three, and `python -m unittest discover worker/tests`,
+and fails on any warning. The workspace lints are
 `clippy::all` and `clippy::pedantic` at `warn`; fix the warning rather than
 widening an `allow`, unless the cast or lint is genuinely intentional and
 the `allow` is scoped to the one item. The fourth needs

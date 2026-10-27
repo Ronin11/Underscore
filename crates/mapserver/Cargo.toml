@@ -1,0 +1,21 @@
+[package]
+name = "underscore-mapserver"
+description = "Keeps music maps for the books on an Audiobookshelf server, and the queue of maps to build."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "underscore-maps"
+path = "src/main.rs"
+
+[dependencies]
+underscore-map = { path = "../map" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tiny_http = "0.12"
+ureq = { version = "3", features = ["json"] }
+
+[lints]
+workspace = true

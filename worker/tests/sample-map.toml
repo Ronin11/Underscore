@@ -1,0 +1,57 @@
+version = 1
+id = "8f3c0011"
+name = "Made by the server"
+complete = false
+
+[book]
+title = "The \"Test\" Book"
+author = "An Author"
+asin = "B0TEST"
+duration = "15:00.0"
+
+[defaults]
+fade_in = "6"
+fade_out = "6"
+crossfade = "5"
+level_db = -6
+
+[[cue]]
+at = { chapter = 1, offset = "0:00.0" }
+until = { chapter = 1, offset = "5:00.0" }
+track = { artist = "SideTrax", title = "Heartbeat", album = "Pack 02" }
+region = { start = "0:00", repeat = true, crossfade = "3" }
+level_db = -4
+why = "calm pad"
+anchor = "Line at 0.0 seconds here."
+
+[[cue]]
+at = { chapter = 2, offset = "0:00.0" }
+until = { chapter = 2, offset = "5:10.0" }
+track = { artist = "SideTrax", title = "News of war", album = "Pack 20" }
+region = { start = "0:00", repeat = true, crossfade = "3" }
+level_db = 0
+why = "action drums"
+anchor = "Line at 300.0 seconds here."
+
+[[cue]]
+at = { chapter = 2, offset = "5:10.0" }
+until = { chapter = 2, offset = "6:10.0" }
+track = { artist = "A Band", title = "Loud Song" }
+level_db = 0
+fade_in = "2"
+why = "the book plays Loud Song"
+anchor = "Line at 610.0 seconds here."
+
+[[cue]]
+at = { chapter = 2, offset = "6:10.0" }
+until = { chapter = 2, offset = "8:20.0" }
+track = { artist = "SideTrax", title = "News of war", album = "Pack 20" }
+level_db = -2
+why = "the radio plays"
+
+[[cue]]
+at = { chapter = 2, offset = "8:20.0" }
+until = { chapter = 2, offset = "10:00.0" }
+silence = true
+why = "a quiet word"
+anchor = "Line at 800.0 seconds here."

@@ -1,0 +1,16 @@
+# Add this service to the compose file that runs Audiobookshelf, so the
+# map server reaches it by name on the same network. Set the worker's
+# token in a .env file beside it: UNDERSCORE_WORKER_TOKEN=<long random>.
+services:
+  underscore-maps:
+    build:
+      context: /opt/underscore        # a checkout of the repository
+      dockerfile: deploy/map-server/Dockerfile
+    restart: unless-stopped
+    environment:
+      UNDERSCORE_MAPS_ABS: http://audiobookshelf:80
+      UNDERSCORE_MAPS_WORKER_TOKEN: ${UNDERSCORE_WORKER_TOKEN}
+    volumes:
+      - ./underscore-maps:/data
+    ports:
+      - "8790:8790"

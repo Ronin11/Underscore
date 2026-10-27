@@ -29,7 +29,12 @@ A Kotlin shell over the Rust engine. The files that matter:
   sign-in, the music server and the music folder maps play from, and the
   sleep sources. An empty section offers to add one, and the + in the
   app bar walks through adding any kind. One server of each kind for
-  now; removing a server forgets its sign-in.
+  now; removing a server forgets its sign-in. The map server
+  (`docs/map-server.md`) needs only its address; it signs in through
+  Audiobookshelf. With it, opening a book loads its default map or asks
+  which, and a book with none gets one made, a chapter at a time. The
+  Music button has "Maps for this book…" and "Make a new map", and the
+  music line says how far a map being made has got.
 - `SettingsActivity.kt` is the Settings tab. It edits `Settings.kt`, one
   preferences file the service watches and pushes into the engine: skip
   lengths, rewind on resume, keep the screen on, shake to undo sleep, the
