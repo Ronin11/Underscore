@@ -223,8 +223,8 @@ around the listener. The words stay on the phone. They are for placing
 music, like the desktop transcription that maps are made from.
 
 whisper.cpp is C++ and links the NDK's shared C++ runtime, so the APK
-carries `libc++_shared.so`. The APK workflow copies it in with cargo-ndk's
-`--link-libcxx-shared`; a hand build copies it from the NDK's sysroot.
+carries `libc++_shared.so`, copied from the NDK's sysroot by the APK
+workflow and by a hand build alike.
 Note that whisper-rs 0.16's `set_abort_callback_safe` passes whisper.cpp a
 pointer of the wrong type, which reads as "abort" and fails the encoder
 with -6; `crates/transcribe` sets the raw callback instead.
@@ -391,15 +391,25 @@ to be uninstalled once; after that updates install in place.
 
 ## Build it yourself
 
-Needs the Android SDK and NDK, Java 17, and the Rust Android target.
+Needs the Android SDK, NDK 28.1, Java 17, and the Rust Android target.
+The NDK's compilers are set directly, as the APK workflow does; NDK 30's
+headers are refused by whisper-rs-sys's bindgen, and with cargo-ndk a
+fresh whisper.cpp build fails to configure.
 
 ```
 rustup target add aarch64-linux-android
-cargo install cargo-ndk
-export ANDROID_NDK_HOME=/path/to/ndk          # the NDK inside your SDK
-cargo ndk --target arm64-v8a --platform 26 \
-  --output-dir android/app/src/main/jniLibs \
-  build --release -p underscore-android
+NDK=/path/to/sdk/ndk/28.1.13356709
+BIN=$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin
+ANDROID_NDK=$NDK ANDROID_NDK_ROOT=$NDK \
+CC_aarch64_linux_android=$BIN/aarch64-linux-android26-clang \
+CXX_aarch64_linux_android=$BIN/aarch64-linux-android26-clang++ \
+AR_aarch64_linux_android=$BIN/llvm-ar \
+CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER=$BIN/aarch64-linux-android26-clang \
+cargo build --release --target aarch64-linux-android -p underscore-android
+mkdir -p android/app/src/main/jniLibs/arm64-v8a
+cp target/aarch64-linux-android/release/libunderscore_android.so \
+   $NDK/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android/libc++_shared.so \
+   android/app/src/main/jniLibs/arm64-v8a/
 cd android && ./gradlew assembleDebug
 adb install -r app/build/outputs/apk/debug/app-debug.apk
 ```
