@@ -51,7 +51,9 @@ crates/library  underscore-library: the Library trait, local folders, the per-st
                 cache, and the conductor that plays a map.
 crates/mapserver underscore-maps: keeps maps for an Audiobookshelf server's books,
                 and the queue of maps for the worker to make.
-crates/android  underscore-android: the JNI bridge the Kotlin app calls.
+crates/bridge   underscore-bridge: the player, servers, maps and transcripts as one
+                plain-Rust API, shared by every app shell.
+crates/android  underscore-android: JNI exports over the bridge, for the Kotlin app.
 crates/cli      underscore: developer command line. Scans folders, checks maps.
 android/        the Android app: a Kotlin shell over the engine.
 worker/         the map worker (Python): transcript, scenes, and music by sound, on

@@ -229,7 +229,7 @@ One language for the engine, the decoders, the network clients, and the
 shells means one test suite covers the behavior that matters and one
 toolchain is pinned in `rust-toolchain.toml`. The Android shell is the one
 place platform code is unavoidable; it is a thin Kotlin layer over a
-hand-written JNI surface in `crates/android`, small enough to read in one
+hand-written JNI surface in `crates/android` over the shared `crates/bridge`, small enough to read in one
 sitting.
 
 The map worker is the exception, and it is Python: the speech and music

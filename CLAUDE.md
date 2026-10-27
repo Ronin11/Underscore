@@ -35,10 +35,12 @@ crates/library   The Library trait (list, search, fetch, progress), LocalLibrary
                  book shares.
 crates/transcribe  Speech to text on the device with whisper.cpp (whisper-rs):
                  model download, 16 kHz mono in, timed segments out.
-crates/android   Bridge (plain Rust over Player), follow.rs (the map worker
-                 thread), transcript.rs (the transcriber that keeps a lead
-                 on playback and writes a transcript per book), and jni.rs
-                 (JNI exports).
+crates/bridge    Bridge (plain Rust over Player, no platform code), follow.rs
+                 (the map worker thread), transcript.rs (the transcriber that
+                 keeps a lead on playback and writes a transcript per book;
+                 its speech engine is the `transcribe` feature, on by
+                 default). What every app shell calls.
+crates/android   jni.rs only: JNI exports, each a thin call into the bridge.
 crates/cli       `underscore` binary. `scan` and `map check`; no playback yet.
 crates/mapserver `underscore-maps`: maps for an Audiobookshelf server's books,
                  each book's default, the queue of maps to make, and the
@@ -88,7 +90,7 @@ android/wear/    The Wear OS app: Health Services says the wearer is asleep,
   from the engine.
 - `Conductor::update` is cheap and may run anywhere. `conductor::open`
   does I/O and must not run on the audio thread or under the bridge lock.
-  On Android that means the worker in `crates/android/src/follow.rs`;
+  On Android that means the worker in `crates/bridge/src/follow.rs`;
   `Bridge::prepare_map` scans a folder and is called before the lock is
   taken, from a Kotlin background thread. So is
   `Bridge::prepare_map_from_server`, which loads the music server's whole

@@ -11,12 +11,9 @@ name = "underscore_android"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-underscore-core = { path = "../core" }
+underscore-bridge = { path = "../bridge", features = ["transcribe"] }
 underscore-decode = { path = "../decode" }
 underscore-library = { path = "../library" }
-underscore-map = { path = "../map" }
-underscore-transcribe = { path = "../transcribe" }
-libc = "0.2"
 jni = "0.21"
 serde_json = "1"
 

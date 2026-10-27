@@ -65,7 +65,7 @@ many cues found a track.
 
 From then on the engine asks the conductor where the book is on every
 render block. When a cue starts or ends, the direction is parked and a
-worker thread in `crates/android/src/follow.rs` opens the track while the
+worker thread in `crates/bridge/src/follow.rs` opens the track while the
 lock is free, then hands it to the music layer with one crossfade. A
 seek that lands in another cue before the worker is done makes the
 earlier job stale; it is dropped, not applied. A map that places cues by

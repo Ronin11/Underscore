@@ -21,17 +21,108 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
+use speech::{Model, SAMPLE_RATE, Segment};
 use underscore_core::Source;
 use underscore_decode::FileSource;
-use underscore_transcribe::{SAMPLE_RATE, Segment, Transcriber, download_model, model_path};
 
 /// How far ahead of the listener to stay.
 pub const LEAD: Duration = Duration::from_mins(15);
 /// How much audio goes to the model at once. Long enough for context,
 /// short enough that the first words show up quickly.
 const CHUNK: Duration = Duration::from_secs(60);
-/// CPU threads for the model.
-const THREADS: usize = 4;
+
+/// The speech engine, when this build has one. Without the `transcribe`
+/// feature the worker still loads transcripts made elsewhere and serves
+/// their captions; only hearing new audio is missing.
+#[cfg(feature = "transcribe")]
+mod speech {
+    use std::path::Path;
+    use std::sync::Arc;
+    use std::sync::atomic::AtomicBool;
+    use std::time::Duration;
+
+    pub use underscore_transcribe::{SAMPLE_RATE, Segment, Transcriber as Model};
+    use underscore_transcribe::{download_model, model_path};
+
+    /// CPU threads for the model.
+    const THREADS: usize = 4;
+
+    /// Load model `name` from `dir`, downloading it first if need be.
+    pub fn open(
+        dir: &Path,
+        name: &str,
+        stop: &AtomicBool,
+        downloading: impl FnOnce(),
+        progress: impl FnMut(u64, Option<u64>),
+        loading: impl FnOnce(),
+    ) -> Result<Model, String> {
+        if !model_path(dir, name).is_file() {
+            downloading();
+            download_model(dir, name, stop, progress)
+                .map_err(|e| format!("downloading the model: {e}"))?;
+        }
+        loading();
+        Model::open(&model_path(dir, name), THREADS).map_err(|e| e.to_string())
+    }
+
+    /// What was said in `audio`, which starts at `from` in the book.
+    /// `Err(None)` when stopped.
+    pub fn hear(
+        model: &Model,
+        audio: &[f32],
+        from: Duration,
+        stop: &Arc<AtomicBool>,
+    ) -> Result<Vec<Segment>, Option<String>> {
+        match model.transcribe(audio, from, stop) {
+            Ok(h) => Ok(h),
+            Err(underscore_transcribe::Error::Stopped) => Err(None),
+            Err(e) => Err(Some(e.to_string())),
+        }
+    }
+}
+
+#[cfg(not(feature = "transcribe"))]
+mod speech {
+    use std::path::Path;
+    use std::sync::Arc;
+    use std::sync::atomic::AtomicBool;
+    use std::time::Duration;
+
+    /// The rate the transcriber's audio would be read at.
+    pub const SAMPLE_RATE: u32 = 16_000;
+
+    /// One stretch of speech, as `underscore_transcribe` has it.
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub struct Segment {
+        pub start: Duration,
+        pub end: Duration,
+        pub text: String,
+    }
+
+    pub struct Model;
+
+    const NONE: &str = "this build cannot transcribe; it shows transcripts made elsewhere";
+
+    pub fn open(
+        _dir: &Path,
+        _name: &str,
+        _stop: &AtomicBool,
+        _downloading: impl FnOnce(),
+        _progress: impl FnMut(u64, Option<u64>),
+        _loading: impl FnOnce(),
+    ) -> Result<Model, String> {
+        Err(NONE.into())
+    }
+
+    pub fn hear(
+        _model: &Model,
+        _audio: &[f32],
+        _from: Duration,
+        _stop: &Arc<AtomicBool>,
+    ) -> Result<Vec<Segment>, Option<String>> {
+        Err(Some(NONE.into()))
+    }
+}
 
 /// Where the audio comes from.
 pub enum Audio {
@@ -263,7 +354,7 @@ fn ms(d: Duration) -> u64 {
 fn work() {
     lower_priority();
     let sh = shared();
-    let mut model: Option<(String, Transcriber)> = None;
+    let mut model: Option<(String, Model)> = None;
     let mut decoder: Option<(u64, FileSource)> = None;
     loop {
         // What to do next, decided under the lock; the work happens outside it.
@@ -320,11 +411,11 @@ fn work() {
             fail(generation, "could not read the book here");
             continue;
         };
-        let heard = match transcriber.transcribe(&audio, from, &sh.stop) {
+        let heard = match speech::hear(transcriber, &audio, from, &sh.stop) {
             Ok(h) => h,
-            Err(underscore_transcribe::Error::Stopped) => continue,
-            Err(e) => {
-                fail(generation, &e.to_string());
+            Err(None) => continue,
+            Err(Some(e)) => {
+                fail(generation, &e);
                 continue;
             }
         };
@@ -365,18 +456,15 @@ fn trim_tail(
     (heard, to)
 }
 
-fn load_model(dir: &Path, name: &str, stop: &AtomicBool) -> Result<Transcriber, String> {
-    if !model_path(dir, name).is_file() {
-        let generation = lock().generation;
-        set_phase(generation, Phase::Downloading);
-        download_model(dir, name, stop, |got, total| {
-            lock().downloaded = (got, total);
-        })
-        .map_err(|e| format!("downloading the model: {e}"))?;
-    }
-    let generation = lock().generation;
-    set_phase(generation, Phase::Loading);
-    Transcriber::open(&model_path(dir, name), THREADS).map_err(|e| e.to_string())
+fn load_model(dir: &Path, name: &str, stop: &AtomicBool) -> Result<Model, String> {
+    speech::open(
+        dir,
+        name,
+        stop,
+        || set_phase(lock().generation, Phase::Downloading),
+        |got, total| lock().downloaded = (got, total),
+        || set_phase(lock().generation, Phase::Loading),
+    )
 }
 
 fn open_decoder(generation: u64) -> Option<FileSource> {

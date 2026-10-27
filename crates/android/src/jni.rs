@@ -28,7 +28,7 @@ use underscore_library::{
     Cache, Credentials, Download, ItemId, Library, MapServer, Opened, SubsonicLogin,
 };
 
-use crate::{Bridge, hint_for_mime};
+use underscore_bridge::{Bridge, hint_for_mime};
 
 /// The Kotlin handle points at the mutex inside an `Arc`; the map worker
 /// holds the `Arc` weakly.
@@ -1012,11 +1012,11 @@ pub extern "system" fn Java_io_github_ronin11_underscore_Engine_nativeTranscribe
     };
     let path = string(&mut env, &path).unwrap_or_default();
     let audio = if path.is_empty() {
-        crate::transcript::Audio::Fd(fd)
+        underscore_bridge::transcript::Audio::Fd(fd)
     } else {
-        crate::transcript::Audio::Path(PathBuf::from(path))
+        underscore_bridge::transcript::Audio::Path(PathBuf::from(path))
     };
-    crate::transcript::start(crate::transcript::Job {
+    underscore_bridge::transcript::start(underscore_bridge::transcript::Job {
         key,
         audio,
         length: Duration::from_millis(u64::try_from(length_ms).unwrap_or(0)),
@@ -1033,7 +1033,9 @@ pub extern "system" fn Java_io_github_ronin11_underscore_Engine_nativeTranscribe
     _handle: jlong,
     at_ms: jlong,
 ) {
-    crate::transcript::set_position(Duration::from_millis(u64::try_from(at_ms).unwrap_or(0)));
+    underscore_bridge::transcript::set_position(Duration::from_millis(
+        u64::try_from(at_ms).unwrap_or(0),
+    ));
 }
 
 /// What the transcriber is doing, as JSON.
@@ -1043,7 +1045,7 @@ pub extern "system" fn Java_io_github_ronin11_underscore_Engine_nativeTranscribe
     _this: JObject,
     _handle: jlong,
 ) -> jstring {
-    jstr(&env, &crate::transcript::status().to_string())
+    jstr(&env, &underscore_bridge::transcript::status().to_string())
 }
 
 /// The file called `name` beside server book `id`, such as its music map
@@ -1093,7 +1095,7 @@ pub extern "system" fn Java_io_github_ronin11_underscore_Engine_nativeTranscribe
     let Ok(bytes) = env.convert_byte_array(&data) else {
         return jstr(&env, "could not read the transcript");
     };
-    match crate::transcript::import(&PathBuf::from(dir), &key, &bytes) {
+    match underscore_bridge::transcript::import(&PathBuf::from(dir), &key, &bytes) {
         Ok(_) => std::ptr::null_mut(),
         Err(e) => jstr(&env, &e),
     }
@@ -1106,7 +1108,7 @@ pub extern "system" fn Java_io_github_ronin11_underscore_Engine_nativeTranscribe
     _this: JObject,
     _handle: jlong,
 ) {
-    crate::transcript::stop();
+    underscore_bridge::transcript::stop();
 }
 
 /// Which downloads to drop to fit the budget: an [`underscore_library::keep::Ask`]

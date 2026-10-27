@@ -1,0 +1,25 @@
+[package]
+name = "underscore-bridge"
+description = "What every app shell calls: the player, the servers, maps, and transcripts, as plain Rust."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[features]
+default = ["transcribe"]
+## Transcribe books on the device. Without it, transcripts made elsewhere
+## still load and show as captions.
+transcribe = ["dep:underscore-transcribe"]
+
+[dependencies]
+underscore-core = { path = "../core" }
+underscore-decode = { path = "../decode" }
+underscore-library = { path = "../library" }
+underscore-map = { path = "../map" }
+underscore-transcribe = { path = "../transcribe", optional = true }
+libc = "0.2"
+serde_json = "1"
+
+[lints]
+workspace = true

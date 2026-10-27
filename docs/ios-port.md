@@ -23,9 +23,9 @@ The Android app is two layers:
 - **Kotlin, Android only.** A shell under `android/` that draws the
   screens, owns the audio output, the media session, notifications, and
   downloads, and calls the Rust side through 71 JNI functions in
-  `crates/android/src/jni.rs`.
+  `crates/android/src/jni.rs`, over the shared `crates/bridge`.
 
-Between the two sits `Bridge`, in `crates/android/src/lib.rs`, with its
+Between the two sits `Bridge`, in `crates/bridge/src/lib.rs`, with its
 helpers `follow.rs` (the map worker thread) and `transcript.rs` (the
 transcriber). `Bridge` is plain Rust. It does not know about Android. It
 owns the `Player`, loads books and music, signs in to the servers, fits a
@@ -77,26 +77,29 @@ the Kotlin shell and the JNI layer with Swift and a C interface.
   The paid program ($99 a year) lasts a year per install and allows
   TestFlight for family.
 
-## Step 1: share the bridge
+## Step 1: share the bridge (done)
 
-`Bridge` lives in `crates/android`, next to `jni.rs`. Move it out first,
-so iOS does not depend on a crate named android:
+`Bridge` used to live in `crates/android`, next to `jni.rs`. It now has
+its own crate, so iOS does not depend on a crate named android:
 
-1. Make `crates/bridge` with `lib.rs` (the `Bridge`), `follow.rs`, and
-   `transcript.rs` moved from `crates/android`.
-2. Leave `jni.rs` in `crates/android`, depending on `crates/bridge`.
-3. Two Android-only things in `Bridge` need a home:
-   `load_speech_fd` and `load_music_fd` open a file descriptor. Keep
-   them, behind `#[cfg(unix)]`; iOS will use the path versions,
-   `load_speech_path` and `load_music_path`.
-4. The transcriber pulls in a speech engine that is the heaviest thing
-   to cross-compile. Put `transcript.rs` behind a cargo feature,
-   `transcribe`, on by default for Android, off for iOS at first.
-   Captions still work on iOS from a transcript the map server made,
-   since importing one does not need the engine.
+1. `crates/bridge` holds `lib.rs` (the `Bridge`), `follow.rs`, and
+   `transcript.rs`.
+2. `crates/android` holds only `jni.rs`, which depends on
+   `crates/bridge`.
+3. `load_speech_fd` and `load_music_fd` take a file descriptor, as the
+   Android file picker gives one. iOS is Unix, so they compile there, but
+   the iOS shell should use the path versions, `load_speech_path` and
+   `load_music_path`, with a security-scoped URL's path.
+4. The speech engine is the `transcribe` feature of `crates/bridge`, on
+   by default. Build the iOS library with
+   `default-features = false` at first: the engine is the heaviest thing
+   to cross-compile. The transcriber still loads transcripts made
+   elsewhere, such as the map server's, and serves their captions; it
+   only cannot hear new audio. `cargo clippy -p underscore-bridge
+   --no-default-features` checks that build.
 
-Run the checks in `CLAUDE.md` after the move. Android must build and
-behave exactly as before. This step changes no behavior.
+This step changed no behavior: Android exports the same 71 functions and
+plays as before.
 
 ## Step 2: the C interface
 

@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/core", "crates/decode", "crates/map", "crates/library", "crates/transcribe", "crates/android", "crates/cli", "crates/mapserver"]
+members = ["crates/core", "crates/decode", "crates/map", "crates/library", "crates/transcribe", "crates/bridge", "crates/android", "crates/cli", "crates/mapserver"]
 
 [workspace.package]
 version = "0.1.0"

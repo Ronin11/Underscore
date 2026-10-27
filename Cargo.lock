@@ -1208,6 +1208,16 @@ name = "underscore-android"
 version = "0.1.0"
 dependencies = [
  "jni",
+ "serde_json",
+ "underscore-bridge",
+ "underscore-decode",
+ "underscore-library",
+]
+
+[[package]]
+name = "underscore-bridge"
+version = "0.1.0"
+dependencies = [
  "libc",
  "serde_json",
  "underscore-core",

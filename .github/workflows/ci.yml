@@ -19,6 +19,8 @@ jobs:
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets --all-features -- -D warnings
       - run: cargo test --workspace --all-features
+      # The bridge without the speech engine, as an iOS build starts.
+      - run: cargo clippy -p underscore-bridge --no-default-features --all-targets -- -D warnings
 
   worker:
     name: map worker tests
