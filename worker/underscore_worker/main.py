@@ -61,6 +61,13 @@ class Worker:
                 except Exception:
                     pass
 
+    def kept(self, book: str, what: str) -> bytes | None:
+        try:
+            return self.maps.kept(book, what)
+        except Exception as e:
+            log(f"{what} from the map server: {e}")
+            return None
+
     def reindex(self) -> None:
         try:
             self.index.refresh(self.sub, self.cfg.music_only, log)
@@ -80,10 +87,18 @@ class Worker:
 
         work = self.cfg.data / "jobs" / book.id
         transcript_path = work / "transcript.json"
-        given = self.abs.beside(book, TRANSCRIPT_BESIDE) if not transcript_path.is_file() else None
+        # A book is transcribed once: the copy kept here, else the map
+        # server's, else one beside the book, before running whisper.
+        given = None
+        if not transcript_path.is_file():
+            given = self.kept(book.id, "transcript") or self.abs.beside(book, TRANSCRIPT_BESIDE)
         transcript = (Transcript.adopt(transcript_path, book, given) if given
                       else Transcript(transcript_path, book, self.cfg.whisper_model))
+        # Likewise who says what: a night's work, never done twice.
         voices_path = work / "voices.json"
+        if not voices_path.is_file() and (kept := self.kept(book.id, "voices")):
+            voices_path.parent.mkdir(parents=True, exist_ok=True)
+            voices_path.write_bytes(kept)
         voices = Voices(self.cfg.ollama_url, self.cfg.ollama_model, book.title,
                         json.loads(voices_path.read_text()) if voices_path.is_file() else None)
 

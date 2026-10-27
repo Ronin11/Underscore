@@ -19,6 +19,8 @@
 //! POST /api/worker/jobs/{job}          progress, the map so far, or the end
 //! PUT  /api/worker/books/{book}/transcript  the transcript, as the phone imports it
 //! PUT  /api/worker/books/{book}/voices      who says what
+//! GET  /api/worker/books/{book}/transcript  what the server keeps, so a worker never
+//! GET  /api/worker/books/{book}/voices      transcribes or listens to a book twice
 //! ```
 
 use serde::Deserialize;
@@ -124,6 +126,12 @@ pub fn handle(
                 },
                 Err(e) => Reply::of(&e),
             },
+            ("GET", ["books", book, "transcript"]) => {
+                Reply::file(store.transcript(book), "application/json")
+            }
+            ("GET", ["books", book, "voices"]) => {
+                Reply::file(store.voices(book), "application/json")
+            }
             ("PUT", ["books", book, "voices"]) => match store.set_voices(book, body) {
                 Ok(()) => Reply::json(200, &serde_json::json!({ "ok": true })),
                 Err(e) => Reply::of(&e),
@@ -257,6 +265,35 @@ mod tests {
             "",
         );
         assert!(list.body.contains("running"));
+    }
+
+    #[test]
+    fn the_worker_can_read_back_what_it_sent() {
+        let s = store();
+        let path = "/api/worker/books/li1/transcript";
+        assert_eq!(
+            handle(&s, &Fake, "GET", path, Some("worker"), "").status,
+            404
+        );
+        assert_eq!(
+            handle(
+                &s,
+                &Fake,
+                "PUT",
+                path,
+                Some("worker"),
+                r#"{"chapters": []}"#
+            )
+            .status,
+            200
+        );
+        let back = handle(&s, &Fake, "GET", path, Some("worker"), "");
+        assert_eq!(back.status, 200);
+        assert!(back.body.contains("chapters"));
+        assert_eq!(
+            handle(&s, &Fake, "GET", path, Some("listener"), "").status,
+            403
+        );
     }
 
     #[test]

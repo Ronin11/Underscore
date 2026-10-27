@@ -31,6 +31,14 @@ class MapServer:
             raise RuntimeError(f"map server: {r.status_code} {r.text}")
         return r.json()
 
+    def kept(self, book: str, what: str) -> bytes | None:
+        """What the server keeps for `book`: "transcript" or "voices", or None."""
+        r = self.s.get(f"{self.url}/api/worker/books/{book}/{what}", timeout=TIMEOUT)
+        if r.status_code == 404:
+            return None
+        r.raise_for_status()
+        return r.content
+
     def put_voices(self, book: str, voices: dict) -> None:
         r = self.s.put(f"{self.url}/api/worker/books/{book}/voices", json=voices, timeout=TIMEOUT)
         r.raise_for_status()

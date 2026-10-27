@@ -1,14 +1,17 @@
 """Speech to text, a chapter at a time, with faster-whisper on the GPU.
 
 The transcript is kept in the format the phone imports (see
-`crates/android/src/transcript.rs`): `{"chapters": [{"index", "title",
+`crates/bridge/src/transcript.rs`): `{"chapters": [{"index", "title",
 "start", "end", "segments": [{"start", "end", "text"}]}]}`, times in
 seconds from the start of the book."""
+from __future__ import annotations
+
 import json
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-from . import audio
-from .servers import Audiobookshelf, Book
+if TYPE_CHECKING:
+    from .servers import Audiobookshelf, Book
 
 RATE = 16000
 
@@ -32,6 +35,8 @@ class Transcriber:
 
     def chapter(self, abs: Audiobookshelf, book: Book, start: float, end: float) -> list[dict]:
         """Segments for `start` to `end` of the book, across its files."""
+        from . import audio
+
         out = []
         for f in book.files:
             lo, hi = max(start, f.start), min(end, f.start + f.duration)
@@ -58,16 +63,30 @@ class Transcript:
 
     @staticmethod
     def adopt(path: Path, book: Book, given: bytes) -> "Transcript":
-        """Take a transcript found beside the book, split into the book's
-        chapters by time."""
+        """Take a transcript made before: the map server's, or one beside
+        the book. Only the chapters it covers count as done, so a partial
+        one is finished rather than taken as whole."""
+        from .compose import chapters_of
+
         v = json.loads(given)
+        t = Transcript(path, book, v.get("model") or "made before")
+        parts = chapters_of(book)
+        given_chapters = v.get("chapters") or []
+        if given_chapters and all("index" in c for c in given_chapters):
+            # Our own format: chapters by index, as this worker wrote them.
+            for c in given_chapters:
+                i = c["index"]
+                if 0 <= i < len(parts) and c.get("segments") is not None:
+                    p = parts[i]
+                    t.put(i, p["title"], p["start"], p["end"], c["segments"])
+            return t
         segs = []
-        for c in v.get("chapters") or [{"segments": v.get("segments") or []}]:
+        for c in given_chapters or [{"segments": v.get("segments") or []}]:
             segs += c.get("segments") or []
-        t = Transcript(path, book, v.get("model") or "beside the book")
-        for i, (title, start, end) in enumerate(book.chapters):
-            mine = [s for s in segs if start <= float(s["start"]) < end]
-            t.put(i, title, start, end, mine)
+        for i, p in enumerate(parts):
+            mine = [s for s in segs if p["start"] <= float(s["start"]) < p["end"]]
+            if mine:
+                t.put(i, p["title"], p["start"], p["end"], mine)
         return t
 
     def has(self, index: int) -> bool:
