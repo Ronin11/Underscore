@@ -136,6 +136,23 @@ def same_person(a: str, b: str) -> bool:
     return False
 
 
+def by_name(ids: list, names: dict, words: dict) -> dict:
+    """Speakers whose names can be one person, each to the one of them who
+    says the most. Vague speakers are left to the model."""
+    order = sorted(ids, key=lambda i: -words.get(i, 0))
+    out = {}
+    for n, a in enumerate(order):
+        if a in VAGUE:
+            continue
+        for b in order[:n]:
+            if b in VAGUE or b in out:
+                continue
+            if same_person(names.get(a, a), names.get(b, b)):
+                out[a] = b
+                break
+    return out
+
+
 def settle_people(people: list[dict], known: set, names: dict | None = None) -> dict:
     """The model's grouping as old id to new, checked: only known ids move,
     each at most once, a group's id is one of its own or "other", only a
@@ -292,7 +309,12 @@ class Voices:
         )
         answer = self._chat(CAST_PROMPT.format(title=self.title, rows=rows), CAST_SCHEMA)
         moves = settle_people(answer.get("people") or [], set(speakers), names)
-        if not moves and not answer.get("people"):
+        # Names that plainly match merge whatever the model said; its answers
+        # vary from run to run, and "Strat" and "Eva Stratt" should not.
+        for a, b in by_name(speakers, names, words).items():
+            if moves.get(a, a) == a:
+                moves[a] = moves.get(b, b)
+        if not any(old != new for old, new in moves.items()) and not answer.get("people"):
             return {}
         people = {p["id"]: p["name"] for p in answer.get("people") or [] if p.get("id") in moves.values()}
         for ch in self.data["chapters"]:

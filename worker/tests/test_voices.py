@@ -96,15 +96,17 @@ class SettleCast(unittest.TestCase):
             {"id": "eva", "name": "Eva", "ids": ["strat"]},
         ]}
         moved = v.settle_cast()
-        self.assertEqual(moved, {}, "a group with a made-up id keeps its own; a second claim is ignored")
+        # The model's bad groups change nothing; the names alone merge Strat and Eva Stratt.
+        self.assertEqual(moved, {"strat": "eva"})
         self.assertEqual(v.data["chapters"][0]["lines"][1]["spans"][0]["who"], "ryland")
 
-    def test_no_answer_changes_nothing(self):
+    def test_no_answer_merges_only_plain_name_matches(self):
         v = self.book()
-        before = json.dumps(v.data)
         v._chat = lambda prompt, schema: {}
-        self.assertEqual(v.settle_cast(), {})
-        self.assertEqual(json.dumps(v.data), before)
+        self.assertEqual(v.settle_cast(), {"strat": "eva"})
+        who = [sp["who"] for line in v.data["chapters"][0]["lines"] for sp in line["spans"]]
+        self.assertEqual(who.count("ryland"), 1)
+        self.assertIn("someone", who, "vague speakers wait for the model")
 
 
 class SamePerson(unittest.TestCase):
@@ -127,3 +129,13 @@ class SamePerson(unittest.TestCase):
         self.assertEqual(moves["loken"], "loken")
         self.assertEqual(moves["eva"], "strat")
         self.assertEqual(moves["someone"], "other")
+
+
+class ByName(unittest.TestCase):
+    def test_plain_matches_merge_even_when_the_model_says_nothing(self):
+        v = SettleCast().book()
+        v._chat = lambda prompt, schema: {"people": []}
+        v.settle_cast()
+        who = {sp["who"] for line in v.data["chapters"][0]["lines"] for sp in line["spans"]}
+        self.assertEqual(len({"eva", "strat"} & who), 1, "one of the two ids is left")
+        self.assertIn("ryland", who)
