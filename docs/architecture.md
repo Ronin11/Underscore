@@ -218,7 +218,7 @@ desktop playback because that is where listening happens.
 ## Release and hosting
 
 Both shells ship from this repository's CI. Today `android.yml` builds the
-Rust library with `cargo-ndk`, assembles the APK with Gradle, and attaches it
+Rust library with the NDK's compilers and Zig (for zwhisper), assembles the APK with Gradle, and attaches it
 to a pre-release tagged `apk-<run number>` on every code push to `main`,
 signed with the debug key. A release key, version tags, and the desktop
 packages come with milestones 7 and 8. No package is hand-built.

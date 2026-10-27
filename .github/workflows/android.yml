@@ -24,6 +24,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.17.0
 
       - uses: actions/setup-java@v4
         with:
@@ -39,13 +45,10 @@ jobs:
 
       - name: Build the Rust library for arm64
         run: |
-          # The NDK's compilers set directly, as local builds do. A pinned
-          # NDK: the runner's newest, 30, has headers whisper-rs-sys's
-          # bindgen refuses ("Unversioned target triples are not
-          # supported"). Not cargo-ndk: with it, a fresh whisper.cpp build
-          # fails to configure (it reaches for the tests and examples the
-          # crate does not ship). That stayed hidden while the build cache
-          # held a whisper.cpp built long ago.
+          # The NDK's compilers set directly for the Rust and C parts (ring);
+          # the transcriber, zwhisper, is Zig, built for the target by
+          # crates/transcribe/build.rs. A pinned NDK, the one local builds
+          # use, rather than whatever is newest on the runner.
           NDK_VERSION=28.1.13356709
           yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;$NDK_VERSION" > /dev/null
           NDK_ROOT="$ANDROID_HOME/ndk/$NDK_VERSION"
@@ -56,16 +59,11 @@ jobs:
           export AR_aarch64_linux_android="$BIN/llvm-ar"
           export CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER="$BIN/aarch64-linux-android26-clang"
           echo "NDK: $NDK_ROOT"
-          # The cache can restore whisper.cpp's CMake build from an older
-          # setup, and CMake then configures on top of it. Start it clean.
-          rm -rf target/aarch64-linux-android/release/build/whisper-rs-sys-*
           cargo build --release --target aarch64-linux-android -p underscore-android
-          # whisper.cpp is C++ and links the NDK's shared C++ runtime, so
-          # the APK carries it beside ours.
+          # Nothing is C++ any more, so the library is the only one.
           out=android/app/src/main/jniLibs/arm64-v8a
           mkdir -p "$out"
           cp target/aarch64-linux-android/release/libunderscore_android.so "$out/"
-          cp "$NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android/libc++_shared.so" "$out/"
           ls -l "$out"
 
       - uses: gradle/actions/setup-gradle@v4

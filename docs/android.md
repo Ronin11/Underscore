@@ -208,9 +208,11 @@ music about 10 dB under its usual level.
 ## Transcribing on the phone
 
 Debug, Transcribe on this phone, turns on a transcriber that follows the
-book as it plays. It runs whisper.cpp on the phone with a model picked
-there (`tiny.en`, `base.en` by default, or `small.en`), downloaded once
-from the whisper.cpp project into the app's files. It keeps about a
+book as it plays. It runs zwhisper on the phone, a Whisper engine written
+in Zig (its own repository, vendored as a submodule and built and linked
+statically by `crates/transcribe/build.rs`), with a model picked there
+(`tiny.en`, `base.en` by default, or `small.en`), downloaded once from
+the whisper.cpp project into the app's files. It keeps about a
 quarter hour ahead of the listener, a minute of audio at a time, then
 waits; a seek past what is done starts it from there. It decodes the
 book with a reader of its own at 16 kHz mono, on a thread at background
@@ -222,12 +224,15 @@ Debug screen shows the lead, the pace against real time, and the lines
 around the listener. The words stay on the phone. They are for placing
 music, like the desktop transcription that maps are made from.
 
-whisper.cpp is C++ and links the NDK's shared C++ runtime, so the APK
-carries `libc++_shared.so`, copied from the NDK's sysroot by the APK
-workflow and by a hand build alike.
-Note that whisper-rs 0.16's `set_abort_callback_safe` passes whisper.cpp a
-pointer of the wrong type, which reads as "abort" and fails the encoder
-with -6; `crates/transcribe` sets the raw callback instead.
+zwhisper is pure Zig with no C++ runtime, so the APK carries only
+`libunderscore_android.so`, which needs nothing beyond Android's libc,
+libm and libdl. Building the Rust side needs `zig` (0.17 or later) on
+PATH and the submodule checked out (`git submodule update --init`), or
+`ZWHISPER_DIR` pointing at a zwhisper checkout; `build.rs` cross-compiles
+it for the target cargo is building. `transcribe_spans` also splits
+segments at quote marks and tags each span with a voice label and pitch,
+which can tell dialogue from narration where the text alone cannot
+(see the voices file in `docs/map-server.md`).
 
 ## Falling asleep
 
@@ -391,10 +396,9 @@ to be uninstalled once; after that updates install in place.
 
 ## Build it yourself
 
-Needs the Android SDK, NDK 28.1, Java 17, and the Rust Android target.
-The NDK's compilers are set directly, as the APK workflow does; NDK 30's
-headers are refused by whisper-rs-sys's bindgen, and with cargo-ndk a
-fresh whisper.cpp build fails to configure.
+Needs the Android SDK, NDK 28.1, Java 17, Zig 0.17, the Rust Android
+target, and the zwhisper submodule (`git submodule update --init`). The
+NDK's compilers are set directly, as the APK workflow does.
 
 ```
 rustup target add aarch64-linux-android
@@ -408,7 +412,6 @@ CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER=$BIN/aarch64-linux-android26-clang \
 cargo build --release --target aarch64-linux-android -p underscore-android
 mkdir -p android/app/src/main/jniLibs/arm64-v8a
 cp target/aarch64-linux-android/release/libunderscore_android.so \
-   $NDK/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android/libc++_shared.so \
    android/app/src/main/jniLibs/arm64-v8a/
 cd android && ./gradlew assembleDebug
 adb install -r app/build/outputs/apk/debug/app-debug.apk

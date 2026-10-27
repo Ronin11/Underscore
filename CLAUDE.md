@@ -33,8 +33,13 @@ crates/library   The Library trait (list, search, fetch, progress), LocalLibrary
                  directions, and keep.rs, which decides which downloads
                  go when space runs short without taking music another
                  book shares.
-crates/transcribe  Speech to text on the device with whisper.cpp (whisper-rs):
-                 model download, 16 kHz mono in, timed segments out.
+crates/transcribe  Speech to text on the device with zwhisper, a Zig engine in
+                 its own repo, vendored as the submodule
+                 crates/transcribe/zwhisper (`git submodule update --init`;
+                 ZWHISPER_DIR overrides) that build.rs compiles and links
+                 statically; needs `zig` 0.17 on PATH. Model
+                 download, 16 kHz mono in, timed segments out; spans with
+                 voice tags through `transcribe_spans`.
 crates/bridge    Bridge (plain Rust over Player, no platform code), follow.rs
                  (the map worker thread), transcript.rs (the transcriber that
                  keeps a lead on playback and writes a transcript per book;
@@ -121,6 +126,9 @@ CC_aarch64_linux_android=$NDK/aarch64-linux-android26-clang \
 AR_aarch64_linux_android=$NDK/llvm-ar \
 cargo check --target aarch64-linux-android -p underscore-android --release
 ```
+
+Every check builds zwhisper, so `zig` 0.17 must be on PATH and the
+submodule checked out (`git submodule update --init`).
 
 Without an NDK, skip the fourth check and watch the APK workflow.
 
