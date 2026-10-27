@@ -7,3 +7,7 @@
 *.flac
 !crates/*/tests/fixtures/*.m4b
 !crates/*/tests/fixtures/*.wav
+
+# Python bytecode from the worker.
+__pycache__/
+*.pyc
