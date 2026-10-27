@@ -103,19 +103,15 @@ map with that id, so a better version of a shared map stays one map.
 ### The map server
 
 Beside Audiobookshelf, in the same compose file, so it reaches
-Audiobookshelf by name. `deploy/map-server/compose.yml` is the service
-to add; `deploy/map-server/Dockerfile` builds it from a checkout:
+Audiobookshelf by its service name and keeps running whatever happens to
+the GPU machine: it only serves maps, transcripts, and the job list.
+`deploy/map-server/compose.yml` is the service to add and has the build
+and token steps; `deploy/map-server/Dockerfile` builds it from a
+checkout. Put its data where the host's backups reach.
 
-```
-git clone https://github.com/Ronin11/Underscore /opt/underscore
-# add the service from deploy/map-server/compose.yml, then:
-echo "UNDERSCORE_WORKER_TOKEN=$(openssl rand -hex 24)" >> .env
-docker compose up -d underscore-maps
-```
-
-Check `UNDERSCORE_MAPS_ABS` against the Audiobookshelf service's name and
-port in that compose file. Phones away from home need it through the same
-reverse proxy as Audiobookshelf, under its own name.
+Phones away from home reach it through the same reverse proxy as
+Audiobookshelf, under its own name; the compose file ends with the Caddy
+block. The worker reaches it directly on port 8790.
 
 ### The worker
 
@@ -126,7 +122,7 @@ CLAP together; Ollama spills to the CPU if it runs short.
 ```
 git clone https://github.com/Ronin11/Underscore ~/underscore
 ~/underscore/deploy/worker/install.sh
-$EDITOR ~/.config/underscore/worker.env      # from worker.env.example
+$EDITOR ~/.config/underscore/worker.env      # from worker.env.example; the map server's address and token
 systemctl --user enable --now underscore-worker
 sudo loginctl enable-linger $USER            # keep it running after logout
 journalctl --user -u underscore-worker -f

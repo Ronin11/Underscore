@@ -1,16 +1,33 @@
-# Add this service to the compose file that runs Audiobookshelf, so the
-# map server reaches it by name on the same network. Set the worker's
-# token in a .env file beside it: UNDERSCORE_WORKER_TOKEN=<long random>.
+# The map server as a service in the same compose file as Audiobookshelf,
+# so it checks phone sign-ins with Audiobookshelf over the stack's own
+# network. This is how it runs beside Audiobookshelf, Navidrome, Jellyfin
+# and Caddy on the media container; the GPU worker runs elsewhere and
+# reaches it on port 8790.
+#
+# Build the image from a checkout of the repository:
+#   git clone https://github.com/Ronin11/Underscore /opt/underscore
+#   cd /opt/underscore && docker build -f deploy/map-server/Dockerfile -t underscore-maps:local .
+# Put the worker's token in underscore-maps.env, readable by root only:
+#   UNDERSCORE_MAPS_WORKER_TOKEN=<long random, from openssl rand -hex 24>
+# The data folder belongs to uid 1000, the user the image runs as.
 services:
   underscore-maps:
-    build:
-      context: /opt/underscore        # a checkout of the repository
-      dockerfile: deploy/map-server/Dockerfile
+    image: underscore-maps:local
+    container_name: underscore-maps
     restart: unless-stopped
-    environment:
-      UNDERSCORE_MAPS_ABS: http://audiobookshelf:80
-      UNDERSCORE_MAPS_WORKER_TOKEN: ${UNDERSCORE_WORKER_TOKEN}
-    volumes:
-      - ./underscore-maps:/data
     ports:
       - "8790:8790"
+    environment:
+      UNDERSCORE_MAPS_ABS: http://audiobookshelf:80   # the Audiobookshelf service and its container port
+    env_file:
+      - ./underscore-maps.env
+    volumes:
+      - /srv/config/underscore-maps:/data
+    depends_on:
+      - audiobookshelf
+
+# And in the Caddyfile, beside the other sites, for phones away from home:
+#   @bookmaps host bookmaps.example.com
+#   handle @bookmaps {
+#       reverse_proxy 127.0.0.1:8790
+#   }
