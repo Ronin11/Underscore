@@ -347,7 +347,7 @@ abstract class ServiceActivity : AppCompatActivity() {
             AlertDialog.Builder(this)
                 .setTitle("Audiobookshelf")
                 .setMessage("Signed in to ${s.serverUrl}")
-                .setPositiveButton("Sign out") { _, _ -> s.serverForget(); refresh() }
+                .setPositiveButton("Remove") { _, _ -> s.serverForget(); refresh() }
                 .setNegativeButton("Close", null)
                 .show()
             return
@@ -404,7 +404,7 @@ abstract class ServiceActivity : AppCompatActivity() {
             AlertDialog.Builder(this)
                 .setTitle("Music server")
                 .setMessage("Signed in to ${s.musicServerUrl}")
-                .setPositiveButton("Sign out") { _, _ -> s.musicServerForget(); refresh() }
+                .setPositiveButton("Remove") { _, _ -> s.musicServerForget(); refresh() }
                 .setNegativeButton("Close", null)
                 .show()
             return

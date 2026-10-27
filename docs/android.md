@@ -27,7 +27,9 @@ A Kotlin shell over the Rust engine. The files that matter:
   from the phone under its menu.
 - `ConnectionsActivity.kt` is the Connections tab: the Audiobookshelf
   sign-in, the music server and the music folder maps play from, and the
-  sleep sources.
+  sleep sources. An empty section offers to add one, and the + in the
+  app bar walks through adding any kind. One server of each kind for
+  now; removing a server forgets its sign-in.
 - `SettingsActivity.kt` is the Settings tab. It edits `Settings.kt`, one
   preferences file the service watches and pushes into the engine: skip
   lengths, rewind on resume, keep the screen on, shake to undo sleep, the

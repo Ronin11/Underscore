@@ -506,6 +506,7 @@ class PlaybackService : Service() {
     /** Sign out and forget the saved login. */
     fun musicServerForget() {
         engine.musicForget()
+        musicServerUrl = null
         musicPrefs.edit().clear().apply()
     }
 
@@ -596,6 +597,7 @@ class PlaybackService : Service() {
     /** Sign out and forget the saved tokens. */
     fun serverForget() {
         engine.serverForget()
+        serverUrl = null
         serverBookList = null
         prefs.edit().clear().apply()
     }

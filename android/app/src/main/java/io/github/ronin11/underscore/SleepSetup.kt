@@ -74,7 +74,7 @@ class SleepSetup(
     }
 
     /** Every kind of source, to set up a new one or test one again. */
-    private fun add() {
+    fun add() {
         val list = LinearLayout(activity).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(0, dp(8), 0, dp(8))

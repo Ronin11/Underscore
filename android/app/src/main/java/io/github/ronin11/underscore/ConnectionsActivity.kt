@@ -6,17 +6,22 @@ import android.net.Uri
 import android.os.Build
 import android.os.Environment
 import android.provider.DocumentsContract
+import android.view.Menu
+import android.view.MenuItem
 import android.view.View
 import android.widget.LinearLayout
 import android.widget.ScrollView
+import android.widget.TextView
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.appcompat.app.AlertDialog
 import androidx.core.content.ContextCompat
 import java.io.File
 
 /**
  * What the app talks to: the Audiobookshelf server for books, the music
  * server or a folder on the phone for maps' music, and the sleep sources,
- * such as the watch.
+ * such as the watch. Each section lists what is added, or offers to add
+ * one when it is empty. The + in the app bar adds any kind.
  */
 class ConnectionsActivity : ServiceActivity() {
 
@@ -24,10 +29,12 @@ class ConnectionsActivity : ServiceActivity() {
 
     private val settings by lazy { Settings(this) }
     private val sleepSetup = SleepSetup(this, { service }) { refresh() }
-    private lateinit var server: Row
-    private lateinit var musicServer: Row
-    private lateinit var musicFolder: Row
-    private lateinit var sleep: Row
+    private lateinit var books: LinearLayout
+    private lateinit var music: LinearLayout
+    private lateinit var sleep: LinearLayout
+    /** What the sections were last built from, so a tick only rebuilds when it changes. */
+    private var built: String? = null
+    private val rows = HashMap<String, Row>()
 
     private val pickMusicFolder = registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
         uri?.let { chooseMusicFolder(it) }
@@ -36,30 +43,153 @@ class ConnectionsActivity : ServiceActivity() {
         if (!granted) toast("Without audio access the music folder cannot be read")
     }
 
+    override fun onCreateOptionsMenu(menu: Menu): Boolean {
+        menu.add("Add a connection").apply {
+            setIcon(R.drawable.ic_add)
+            icon?.setTint(ContextCompat.getColor(this@ConnectionsActivity, R.color.paper))
+            setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS)
+            setOnMenuItemClickListener { addDialog(); true }
+        }
+        return true
+    }
+
     override fun refresh() {
         val s = service
-        server.summary = when {
+        val setUp = Sleep.sources.filter { settings.sleepSetUp(it.key) }
+        val shape = listOf(
+            s?.serverUrl != null, s?.musicServerUrl != null, settings.musicDir != null,
+        ).joinToString() + setUp.joinToString { it.key }
+        if (shape != built) {
+            built = shape
+            build(s?.serverUrl != null, s?.musicServerUrl != null, settings.musicDir != null, setUp)
+        }
+        rows["server"]?.summary = when {
             s == null -> "Starting…"
             s.serverBusy != null -> s.serverBusy
             s.engine.hasServer -> "Signed in to ${s.serverUrl}"
-            s.serverUrl != null -> "${s.serverUrl}, not signed in"
-            else -> "Not signed in. Books come from here."
+            else -> "${s.serverUrl}, not signed in. Tap to sign in."
         }
-        musicServer.summary = when {
+        rows["music"]?.summary = when {
             s == null -> "Starting…"
             s.musicServerBusy != null -> s.musicServerBusy
             s.engine.hasMusicServer -> "Signed in to ${s.musicServerUrl}. Maps play from it."
-            s.musicServerUrl != null -> "${s.musicServerUrl}, not signed in"
-            else -> "Not signed in. Maps need this or a music folder."
+            else -> "${s.musicServerUrl}, not signed in. Tap to sign in."
         }
-        musicFolder.summary = settings.musicDir ?: "Not set. Used when no music server is signed in."
-        val listening = Sleep.sources.filter { Sleep.listening(settings, it) }.map { it.title }
-        val setUp = Sleep.sources.filter { settings.sleepSetUp(it.key) }.map { it.title }
-        sleep.summary = when {
-            listening.isNotEmpty() -> "Auto is on: ${listening.joinToString()}"
-            setUp.isNotEmpty() -> "Set up: ${setUp.joinToString()}. Auto is off."
-            else -> "None set up. The watch, this phone, or another app can tell the player you fell asleep."
+        rows["folder"]?.summary = settings.musicDir
+        for (source in setUp) {
+            rows["sleep:${source.key}"]?.summary = when {
+                Sleep.listening(settings, source) -> "Auto is on and listening"
+                settings.sleepSource(source.key) && settings.sleepAuto -> "Auto is on"
+                else -> "Set up. Not used by Auto."
+            }
         }
+    }
+
+    /** Fill each section with what is added, or an Add row when it is empty. */
+    private fun build(server: Boolean, musicServer: Boolean, folder: Boolean, setUp: List<SleepSource>) {
+        rows.clear()
+        books.removeAllViews()
+        if (server) {
+            books.addView(keep("server", row("Audiobookshelf", null) { serverDialog() }))
+        } else {
+            books.addView(addRow("Add an Audiobookshelf server") { serverDialog() })
+        }
+        music.removeAllViews()
+        if (musicServer) music.addView(keep("music", row("Navidrome", null) { musicServerDialog() }))
+        if (folder) music.addView(keep("folder", row("Music folder", null) { folderDialog() }))
+        if (!musicServer && !folder) {
+            music.addView(addRow("Add a music server") { musicServerDialog() })
+            music.addView(addRow("Add a music folder on this phone") { pickMusicFolder.launch(null) })
+        }
+        sleep.removeAllViews()
+        for (source in setUp) sleep.addView(keep("sleep:${source.key}", row(source.title, null) { sleepSetup.auto() }))
+        if (setUp.isEmpty()) sleep.addView(addRow("Add a sleep source") { sleepSetup.add() })
+    }
+
+    private fun keep(key: String, row: Row): View {
+        rows[key] = row
+        return row.view
+    }
+
+    /** An empty section's row: a + and what it adds, in the accent color. */
+    private fun addRow(text: String, onClick: () -> Unit): View = TextView(this).apply {
+        this.text = text
+        textSize = 16f
+        setTextColor(themeColor(androidx.appcompat.R.attr.colorAccent))
+        val plus = ContextCompat.getDrawable(context, R.drawable.ic_add)?.mutate()
+        plus?.setTint(currentTextColor)
+        setCompoundDrawablesRelativeWithIntrinsicBounds(plus, null, null, null)
+        compoundDrawablePadding = dp(16)
+        setPadding(dp(16), dp(14), dp(16), dp(14))
+        isClickable = true
+        isFocusable = true
+        setBackgroundResource(selectableBackground())
+        setOnClickListener { onClick() }
+    }
+
+    /** The + in the app bar: every kind of connection, and what each is for. */
+    private fun addDialog() {
+        val s = service
+        data class Kind(val title: String, val summary: String, val note: String?, val add: (() -> Unit)?)
+        val kinds = listOf(
+            Kind(
+                "Audiobookshelf server", "Your books, positions, and maps kept beside them.",
+                if (s?.serverUrl != null) "One for now. Remove the one you have first." else null,
+                { serverDialog() }.takeIf { s?.serverUrl == null },
+            ),
+            Kind(
+                "Music server", "Navidrome or another Subsonic server. Maps play their music from it.",
+                if (s?.musicServerUrl != null) "One for now. Remove the one you have first." else null,
+                { musicServerDialog() }.takeIf { s?.musicServerUrl == null },
+            ),
+            Kind(
+                "Music folder", "Music on this phone, for maps, when there is no music server.",
+                if (settings.musicDir != null) "Picking another replaces ${settings.musicDir}." else null,
+                { pickMusicFolder.launch(null) },
+            ),
+            Kind("Sleep source", "The watch, this phone, or another app tells the player you fell asleep.", null) { sleepSetup.add() },
+            Kind("Map server", "Maps for your books from a server that collects them.", "Not built yet.", null),
+        )
+        val list = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(0, dp(8), 0, dp(8))
+        }
+        val dialog = AlertDialog.Builder(this)
+            .setTitle("Add a connection")
+            .setView(ScrollView(this).apply { addView(list) })
+            .setNegativeButton("Cancel", null)
+            .create()
+        for (k in kinds) {
+            list.addView(
+                LinearLayout(this).apply {
+                    orientation = LinearLayout.VERTICAL
+                    setPadding(dp(24), dp(12), dp(24), dp(12))
+                    addView(TextView(context).apply { text = k.title; textSize = 16f })
+                    addView(TextView(context).apply { text = k.summary; textSize = 13f; alpha = 0.7f })
+                    if (k.note != null) addView(TextView(context).apply { text = k.note; textSize = 13f; alpha = 0.7f })
+                    val add = k.add
+                    if (add != null) {
+                        isClickable = true
+                        isFocusable = true
+                        setBackgroundResource(selectableBackground())
+                        setOnClickListener { dialog.dismiss(); add() }
+                    } else {
+                        alpha = 0.45f
+                    }
+                },
+            )
+        }
+        dialog.show()
+    }
+
+    private fun folderDialog() {
+        AlertDialog.Builder(this)
+            .setTitle("Music folder")
+            .setMessage(settings.musicDir)
+            .setPositiveButton("Change") { _, _ -> pickMusicFolder.launch(null) }
+            .setNeutralButton("Remove") { _, _ -> settings.musicDir = null; refresh() }
+            .setNegativeButton("Close", null)
+            .show()
     }
 
     private fun chooseMusicFolder(uri: Uri) {
@@ -103,21 +233,18 @@ class ConnectionsActivity : ServiceActivity() {
         root.addView(toolbar("Connections", up = false))
         val list = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
 
+        books = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        music = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        sleep = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         list.addView(heading("Books"))
-        server = row("Audiobookshelf", null) { serverDialog() }
-        list.addView(server.view)
-
+        list.addView(books)
         list.addView(divider())
         list.addView(heading("Music for maps"))
-        musicServer = row("Navidrome", null) { musicServerDialog() }
-        list.addView(musicServer.view)
-        musicFolder = row("Music folder", null) { pickMusicFolder.launch(null) }
-        list.addView(musicFolder.view)
-
+        list.addView(music)
         list.addView(divider())
         list.addView(heading("Sleep"))
-        sleep = row("Sleep sources", null) { sleepSetup.auto() }
-        list.addView(sleep.view)
+        list.addView(sleep)
+        built = null
 
         root.addView(ScrollView(this).apply { addView(list) })
         return root
