@@ -98,8 +98,15 @@ class SubtitlesActivity : ServiceActivity() {
         val size = s.settings.subtitleSize
         val (cur, through) = place(sub, s.engine.positionMs)
         val lines = sub.lines
-        if (sub.key != shownKey || size != shownSize || first < 0 || cur < first || cur > first + column.childCount - 1) {
+        // A jump (a chapter, a seek, a skip of more than a few lines) starts
+        // the page again; the voice moving on just slides it.
+        val jumped = shownCurrent >= 0 && (cur < shownCurrent || cur > shownCurrent + JUMP)
+        if (sub.key != shownKey || size != shownSize || first < 0 || jumped || cur < first || cur > first + column.childCount - 1) {
             build(sub, cur, size)
+            light(sub, cur, through)
+            measureNow()
+            val v = column.getChildAt(cur - first) ?: return
+            column.translationY = stage.height * 0.42f - (v.top + v.height * through)
             return
         }
         var shifted = 0f
@@ -149,6 +156,21 @@ class SubtitlesActivity : ServiceActivity() {
         setPadding(0, 0, 0, dp(14))
         text = styled(sub, sub.lines[i], -1f)
         this.alpha = alpha
+    }
+
+    /**
+     * Lay the lines out now rather than at the next frame, so a page built
+     * after a jump is placed right away instead of a frame late in the old
+     * place.
+     */
+    private fun measureNow() {
+        val w = stage.width
+        if (w == 0) return
+        column.measure(
+            View.MeasureSpec.makeMeasureSpec(w, View.MeasureSpec.EXACTLY),
+            View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED),
+        )
+        column.layout(0, 0, w, column.measuredHeight)
     }
 
     /** Put the lines around [cur] on screen, from scratch. */
@@ -279,6 +301,8 @@ class SubtitlesActivity : ServiceActivity() {
         const val AFTER = 10
         /** A narrator span this short between speech is a speech tag: it stays on the speaker's line. */
         const val TAG_WORDS = 4
+        /** Lines ahead the voice may move in one frame before it counts as a jump. */
+        const val JUMP = 3
         const val PAST = 0.4f
         const val AHEAD = 0.55f
     }
