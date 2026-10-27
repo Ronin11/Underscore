@@ -11,9 +11,10 @@ if ! "$CONDA" env list | grep -q "^$ENV "; then
     "$CONDA" create -y -n "$ENV" python=3.11
 fi
 PY="$HOME/miniconda3/envs/$ENV/bin/python"
-# Torch's CUDA wheels carry their own CUDA and cuDNN; only the driver is needed.
+# Torch's CUDA wheels carry their own CUDA and cuDNN; only the driver is
+# needed. Any CUDA 12 build runs on a CUDA 12 driver (535 and up).
 "$PY" -m pip install --upgrade pip
-"$PY" -m pip install torch --index-url https://download.pytorch.org/whl/cu121
+"$PY" -m pip install torch --index-url https://download.pytorch.org/whl/cu126
 "$PY" -m pip install -e "$here/worker"
 
 mkdir -p "$HOME/.config/underscore" "$HOME/.config/systemd/user"
