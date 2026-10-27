@@ -70,6 +70,8 @@ class Worker:
     def build(self, job: dict) -> None:
         jid, map_id = job["id"], job["map"]
         say = lambda message, **more: self.maps.progress(jid, message=message, **more)
+        # The server and the phone count chapters from 1.
+        numbers = lambda: sorted(k + 1 for k in by_chapter)
         book = self.abs.book(job["book"])
         log(f"job {jid}: {book.title}, from chapter {job['chapter']}")
         chapters = compose.chapters_of(book)
@@ -106,12 +108,12 @@ class Worker:
             ch = chapters[i]
             label = f"chapter {ch['number']}" if ch["number"] else f"{compose.clock(ch['start'])}"
             if not transcript.has(i):
-                say(f"Transcribing {label}", done=sorted(by_chapter))
+                say(f"Transcribing {label}", done=numbers())
                 segs = self.whisper.chapter(self.abs, book, ch["start"], ch["end"])
                 transcript.put(i, ch["title"], ch["start"], ch["end"], segs)
             ch["segments"] = transcript.segments(i)
 
-            say(f"Reading the scenes in {label}", done=sorted(by_chapter))
+            say(f"Reading the scenes in {label}", done=numbers())
             scenes = self.scenes.chapter(ch["number"], ch["title"], ch["start"], ch["end"], ch["segments"])
             moods = [s.get("mood") or s.get("summary") or "calm ambient" for s in scenes]
             sims = self.clap.text(moods) @ self.index.emb.T
@@ -125,7 +127,7 @@ class Worker:
             complete = len(by_chapter) == len(chapters)
             text = compose.write(map_id, NAME, complete, book, chapters, by_chapter)
             back = self.maps.progress(
-                jid, message=f"Finished {label}", done=sorted(k + 1 for k in by_chapter),
+                jid, message=f"Finished {label}", done=numbers(),
                 total=len(chapters), map=text,
             )
             try:
