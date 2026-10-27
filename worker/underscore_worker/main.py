@@ -129,7 +129,7 @@ class Worker:
         while todo:
             i = todo.pop(0)
             ch = chapters[i]
-            label = f"chapter {ch['number']}" if ch["number"] else f"{compose.clock(ch['start'])}"
+            label = compose.label(ch)
             if not transcript.has(i):
                 say(f"Transcribing {label}", done=numbers())
                 segs = self.whisper.chapter(self.abs, book, ch["start"], ch["end"])
@@ -167,7 +167,7 @@ class Worker:
         for i, ch in enumerate(chapters):
             if voices.has(i):
                 continue
-            label = f"chapter {ch['number']}" if ch["number"] else compose.clock(ch["start"])
+            label = compose.label(ch)
             say(f"Map done. Listening for voices in {label}")
             ch["segments"] = transcript.segments(i)
             self.hear_voices(book, i, ch, voices, voices_path)
@@ -200,7 +200,7 @@ class Worker:
         while todo:
             i = todo.pop(0)
             ch = chapters[i]
-            label = f"chapter {ch['number']}" if ch["number"] else compose.clock(ch["start"])
+            label = compose.label(ch)
             if not transcript.has(i):
                 self.maps.progress(jid, message=f"Transcribing {label}", done=numbers(), total=len(chapters))
                 segs = self.whisper.chapter(self.abs, book, ch["start"], ch["end"])

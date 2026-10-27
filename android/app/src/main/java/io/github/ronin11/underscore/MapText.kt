@@ -16,20 +16,28 @@ object MapText {
         Regex("""$field\s*=\s*"((?:[^"\\]|\\.)*)"""").find(v)?.groupValues?.get(1)
             ?.replace("\\\"", "\"")?.replace("\\\\", "\\")
 
-    private fun where(v: String): String {
-        chapterAt.find(v)?.let { return "ch ${it.groupValues[1]}  ${it.groupValues[2]}" }
+    /**
+     * A position as words. Maps count the recording's chapter marks, credits
+     * and all, so a mark is shown by its title when [title] knows it, and
+     * as "mark n" when not, never as a chapter number the book would not use.
+     */
+    private fun where(v: String, title: (Int) -> String?): String {
+        chapterAt.find(v)?.let {
+            val n = it.groupValues[1].toInt()
+            return "${title(n) ?: "mark $n"}  ${it.groupValues[2]}"
+        }
         bareAt.find(v)?.let { return it.groupValues[1] }
         return v.trim()
     }
 
     /** One line per cue: where it plays, and what. A header line first. */
-    fun lines(toml: String): List<Pair<String, String>> {
+    fun lines(toml: String, title: (Int) -> String? = { null }): List<Pair<String, String>> {
         val out = mutableListOf<Pair<String, String>>()
         var head = mutableMapOf<String, String>()
         var cue: MutableMap<String, String>? = null
         fun flush() {
             val c = cue ?: return
-            val span = where(c["at"] ?: "") + (c["until"]?.let { " → " + where(it) } ?: "")
+            val span = where(c["at"] ?: "", title) + (c["until"]?.let { " → " + where(it, title) } ?: "")
             val what = when {
                 c["silence"] == "true" -> "Silence"
                 c["track"] != null -> {

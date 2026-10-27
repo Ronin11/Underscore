@@ -35,6 +35,14 @@ def chapters_of(book) -> list[dict]:
     return out
 
 
+def label(ch: dict) -> str:
+    """A chapter as the listener knows it: its own title. Chapter marks are
+    counted credits and all, so "chapter 3" may be the book's Chapter 1."""
+    if ch.get("title"):
+        return ch["title"]
+    return f"chapter mark {ch['number']}" if ch["number"] else clock(ch["start"])
+
+
 def order(n: int, wanted: int, done: set) -> list[int]:
     """Chapter indices still to do: from the listener's on, then the ones before."""
     start = min(max(wanted - 1, 0), max(n - 1, 0))

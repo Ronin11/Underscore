@@ -222,7 +222,9 @@ class BookActivity : ServiceActivity() {
         Thread({
             val toml = s.engine.mapServerMap(m.id)
             runOnUiThread {
-                if (toml == null) toast("The map server did not send it") else lines(m.name, MapText.lines(toml))
+                // Chapter titles are known for the book open in the player.
+                val title: (Int) -> String? = if (s.openKey == key) { n -> s.engine.chapterTitle(n - 1) } else { _ -> null }
+                if (toml == null) toast("The map server did not send it") else lines(m.name, MapText.lines(toml, title))
             }
         }, "underscore-book-map").start()
     }

@@ -47,6 +47,11 @@ class Compose(unittest.TestCase):
         self.assertEqual([p["number"] for p in parts], [None, None, None])
         self.assertEqual(parts[-1]["end"], 4000.0)
 
+    def test_chapters_are_named_by_their_titles_not_their_count(self):
+        self.assertEqual(compose.label({"title": "Chapter 1", "number": 3, "start": 17.0}), "Chapter 1")
+        self.assertEqual(compose.label({"title": "", "number": 3, "start": 0.0}), "chapter mark 3")
+        self.assertEqual(compose.label({"title": "", "number": None, "start": 1800.0}), "30:00.0")
+
     def test_singing_and_repeats_are_avoided(self):
         voice = np.array([0.0, 0.0, 0.0, 1.0])
         c = compose.Chooser(SONGS, voice)

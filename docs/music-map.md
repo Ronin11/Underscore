@@ -76,7 +76,10 @@ Before the tables, a map can say who it is:
 | `complete` | `false` while a map is still being made, chapter by chapter. Chapters not reached yet have no cues and play without music. Absent means `true`. |
 
 Times are written as people write them: `4:10`, `1:02:03.5`, or a bare
-number of seconds. Chapters count from one.
+number of seconds. Chapters count the recording's chapter marks from one,
+credits and all: in a book whose first two marks are Opening Credits and
+a Dedication, the book's Chapter 1 is `chapter = 3`. That keeps positions
+exact whatever the marks are called. Screens show a mark by its title.
 
 Per cue:
 

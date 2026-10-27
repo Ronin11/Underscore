@@ -138,7 +138,8 @@ class MainActivity : ServiceActivity() {
             !loaded -> ""
             chapters == 0 -> "No chapter marks"
             !inChapter -> "$chapters chapters"
-            else -> "Chapter ${chapter + 1} of $chapters" + (e.chapterTitle(chapter)?.let { "  ·  $it" } ?: "")
+            // The book's own name for it: its first marks are often credits, so a count is off.
+            else -> e.chapterTitle(chapter) ?: "Chapter ${chapter + 1} of $chapters"
         }
         chapterView.visibility = if (loaded) View.VISIBLE else View.GONE
         val caption = if (!loaded) null else s.subtitles.current(e.positionMs)?.text
