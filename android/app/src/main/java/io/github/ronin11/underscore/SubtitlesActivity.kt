@@ -261,7 +261,17 @@ class SubtitlesActivity : ServiceActivity() {
         root.addView(bar)
 
         column = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        stage = FrameLayout(this).apply {
+        // The column of lines is far taller than the screen; the stage shows a
+        // window onto it. A plain frame would measure the column no taller than
+        // itself, and lines past its bottom, the ones about to be read, would
+        // get no height at all.
+        stage = object : FrameLayout(this) {
+            override fun measureChildWithMargins(child: View, widthSpec: Int, widthUsed: Int, heightSpec: Int, heightUsed: Int) {
+                val lp = child.layoutParams as MarginLayoutParams
+                val w = getChildMeasureSpec(widthSpec, paddingLeft + paddingRight + lp.leftMargin + lp.rightMargin + widthUsed, lp.width)
+                child.measure(w, View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED))
+            }
+        }.apply {
             clipChildren = true
             setPadding(dp(20), 0, dp(20), 0)
             addView(column, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
