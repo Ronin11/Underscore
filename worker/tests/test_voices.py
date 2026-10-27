@@ -105,3 +105,25 @@ class SettleCast(unittest.TestCase):
         v._chat = lambda prompt, schema: {}
         self.assertEqual(v.settle_cast(), {})
         self.assertEqual(json.dumps(v.data), before)
+
+
+class SamePerson(unittest.TestCase):
+    def test_names_that_can_be_one_person(self):
+        from underscore_worker.voices import same_person
+        self.assertTrue(same_person("Eva Stratt", "Strat"))
+        self.assertTrue(same_person("Dr. Lokken", "Dr. Loken"))
+        self.assertTrue(same_person("Strat", "Stratt"))
+        self.assertFalse(same_person("Dr. Loken", "Ryland Grace"))
+        self.assertFalse(same_person("Dubois", "Ryland Grace"))
+
+    def test_a_merge_of_different_people_is_refused(self):
+        from underscore_worker.voices import settle_people
+        names = {"ryland": "Ryland Grace", "loken": "Dr. Loken", "eva": "Eva Stratt", "strat": "Strat", "someone": "someone"}
+        moves = settle_people([
+            {"id": "ryland", "name": "Ryland Grace", "ids": ["ryland", "loken"]},
+            {"id": "strat", "name": "Eva Stratt", "ids": ["strat", "eva"]},
+            {"id": "other", "name": "Other voices", "ids": ["someone", "eva"]},
+        ], set(names), names)
+        self.assertEqual(moves["loken"], "loken")
+        self.assertEqual(moves["eva"], "strat")
+        self.assertEqual(moves["someone"], "other")

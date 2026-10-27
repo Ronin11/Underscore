@@ -18,6 +18,7 @@ Times are seconds from the start of the book. "narrator" is reserved.
 """
 import json
 import re
+from difflib import SequenceMatcher
 
 import requests
 
@@ -114,10 +115,34 @@ CAST_SCHEMA = {
 }
 
 
-def settle_people(people: list[dict], known: set) -> dict:
+# Speakers that are no one in particular, which may join "other".
+VAGUE = {"someone", "voice", "voices", "woman", "man", "person", "people", "somebody", "crowd", "other", "unknown"}
+
+
+def _words(name: str) -> set:
+    return {w for w in re.split(r"[^a-z]+", name.lower()) if len(w) >= 3 and w not in {"the", "doctor", "mister"}}
+
+
+def same_person(a: str, b: str) -> bool:
+    """Whether two speaker names can be one person: they share a word,
+    allowing a slip of a letter or two ("Strat" and "Eva Stratt"). The
+    model's grouping is only taken where this holds; it once folded two
+    other characters into the narrator because their sample lines had been
+    misread."""
+    for x in _words(a):
+        for y in _words(b):
+            if x == y or (min(len(x), len(y)) >= 4 and SequenceMatcher(None, x, y).ratio() >= 0.8):
+                return True
+    return False
+
+
+def settle_people(people: list[dict], known: set, names: dict | None = None) -> dict:
     """The model's grouping as old id to new, checked: only known ids move,
-    each at most once, and a group's id is one of its own or "other". An
-    id left out keeps itself."""
+    each at most once, a group's id is one of its own or "other", only a
+    vague speaker may join "other", and two ids merge only when their names
+    can be one person. An id left out keeps itself."""
+    names = names or {}
+    name = lambda i: names.get(i, i)
     moves = {}
     for p in people:
         target = _id(p.get("id") or "")
@@ -128,7 +153,13 @@ def settle_people(people: list[dict], known: set) -> dict:
             # A new id would lose the name the lines were known by; use the group's own.
             target = members[0]
         for m in members:
-            moves.setdefault(m, target)
+            if m in moves:
+                continue
+            if target == OTHER:
+                ok = m in VAGUE or _words(name(m)) <= VAGUE or not _words(name(m))
+            else:
+                ok = m == target or same_person(name(m), name(target)) or same_person(m, target)
+            moves[m] = target if ok else m
     return moves
 
 
@@ -260,7 +291,7 @@ class Voices:
             for cid in sorted(speakers, key=lambda c: -words[c])
         )
         answer = self._chat(CAST_PROMPT.format(title=self.title, rows=rows), CAST_SCHEMA)
-        moves = settle_people(answer.get("people") or [], set(speakers))
+        moves = settle_people(answer.get("people") or [], set(speakers), names)
         if not moves and not answer.get("people"):
             return {}
         people = {p["id"]: p["name"] for p in answer.get("people") or [] if p.get("id") in moves.values()}
