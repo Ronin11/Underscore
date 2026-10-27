@@ -186,14 +186,19 @@ that book.
 ## Subtitles
 
 CC on the player, or a tap on the line under the title, opens subtitles:
-the line being read, large, on black, with the two before and the one
-after faded around it. The screen stays on, and the text size is set
-there. `Subtitles.kt` reads the open book's lines from the files the app
-keeps: the voices file when the map server has worked out who says what
-(`docs/map-server.md`), otherwise the transcript, all the narrator's.
-With voices, each speaker's words are in their own color, bold, and
-their name shows above the line; narration stays plain. Speaker colors
-come from a small palette chosen to read on black and to tell apart.
+the book scrolls past on black like a teleprompter, following the voice
+every frame rather than a line at a time. In the line being read, the
+words already spoken are bright and the rest dim. There are no word
+timings, only each line's start and end, so a line's words are spread
+over its time by their length. The screen stays on, and the text size is
+set there. `Subtitles.kt` reads the open book's lines from the files the
+app keeps: the voices file when the map server has worked out who says
+what (`docs/map-server.md`), otherwise the transcript, all the
+narrator's. With voices, each speaker starts a new line with their name
+before their words, both in their color; short speech tags such as "I
+say," stay on the speaker's line, and narration stays plain. Speaker
+colors come from a small palette chosen to read on black and to tell
+apart.
 
 The voices file is fetched when a server book opens, and fetched again
 while the map server is still working them out, so speakers appear
