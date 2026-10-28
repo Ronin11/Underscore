@@ -1,12 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- A music map: lines of a book, the music beneath, and a pin where it is
-     placed. The logo's idea at icon size. -->
+<!-- A music map: a bookmark ribbon with a note on it, music that marks a
+     place in the book. -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="24dp"
     android:height="24dp"
-    android:viewportWidth="108"
-    android:viewportHeight="108"
+    android:viewportWidth="24"
+    android:viewportHeight="24"
     android:tint="?attr/colorControlNormal">
-    <path android:fillColor="#FFFFFFFF" android:pathData="M14,30h52v10h-52z M14,52h40v10h-40z M14,76h80v12h-80z" />
-    <path android:fillColor="#FFFFFFFF" android:fillType="evenOdd" android:pathData="M76,14 a14,14 0 0 1 14,14 c0,10 -14,26 -14,32 c0,-6 -14,-22 -14,-32 a14,14 0 0 1 14,-14z M76,22 a6,6 0 1 0 0.01,0z" />
+    <path android:strokeColor="#FFFFFFFF" android:strokeWidth="2" android:strokeLineCap="round" android:strokeLineJoin="round" android:pathData="M6.5,3 h11 v18 l-5.5,-4.2 L6.5,21 z" />
+    <path android:strokeColor="#FFFFFFFF" android:strokeWidth="1.6" android:strokeLineCap="round" android:strokeLineJoin="round" android:pathData="M13,13 V7.5 l2,1" />
+    <path android:fillColor="#FFFFFFFF" android:pathData="M11.3,11.3 a1.7,1.7 0 1 0 0.01,0 z" />
 </vector>

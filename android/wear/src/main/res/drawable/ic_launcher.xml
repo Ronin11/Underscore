@@ -1,10 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- The phone app's logo on its background: two lines of a book over a
+     sound wave. -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp"
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
     <path android:fillColor="#1E1E2E" android:pathData="M0,0h108v108h-108z" />
-    <path android:fillColor="#F5E0DC" android:pathData="M24,70h60v8h-60z" />
-    <path android:fillColor="#89B4FA" android:pathData="M24,30h60v6h-60z M24,44h40v6h-40z M24,58h52v6h-52z" />
+    <path android:strokeColor="#89B4FA" android:strokeWidth="5.5" android:strokeLineCap="round" android:pathData="M32,36.1 h44 M32,48.5 h30.25" />
+    <path android:strokeColor="#F5E0DC" android:strokeWidth="5.5" android:strokeLineCap="round" android:strokeLineJoin="round" android:pathData="M29.25,66.35 q6.1875,-11 12.375,0 q6.1875,11 12.375,0 q6.1875,-11 12.375,0 q6.1875,11 12.375,0" />
 </vector>
