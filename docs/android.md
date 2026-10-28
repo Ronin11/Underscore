@@ -38,7 +38,9 @@ A Kotlin shell over the Rust engine. The files that matter:
   Audiobookshelf. With it, opening a book loads its default map or asks
   which, and a book with none gets one made, a chapter at a time.
 - `MapsActivity.kt` is the music screen, opened by the player's Music
-  tile: what plays now, music on or off, the open book's maps on the map
+  tile: the cue before, the one playing with how long it has left and
+  why it was chosen, and the next, saying how long any quiet before it
+  lasts (`Bridge::map_nearby`); music on or off, the open book's maps on the map
   server (tap one to play the book with it or read it), "Make a new map"
   and how far one being made has got, and a map loaded from a file.
 - `SettingsActivity.kt` is the Settings tab. It edits `Settings.kt`, one

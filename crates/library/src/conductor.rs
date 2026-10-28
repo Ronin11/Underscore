@@ -10,7 +10,7 @@ use std::time::Duration;
 
 use underscore_core::{Gain, LayerId, Player, Region, RegionConfig, Silence, Source};
 use underscore_decode::FileSource;
-use underscore_map::{Change, Map, Schedule, Timeline};
+use underscore_map::{Change, Map, Schedule, Span, Timeline};
 
 use crate::{Cache, Error, ItemId, Library, Query};
 
@@ -100,6 +100,12 @@ impl Conductor {
     #[must_use]
     pub fn resolutions(&self) -> &[Resolution] {
         &self.resolved
+    }
+
+    /// Every cue's span in the book, in map order.
+    #[must_use]
+    pub fn spans(&self) -> &[Span] {
+        self.schedule.spans()
     }
 
     /// The cue current at the last update.

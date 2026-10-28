@@ -715,6 +715,15 @@ impl Bridge {
             .map_or_else(|| "No map".to_string(), MapPlayback::status)
     }
 
+    /// The map's cues before, at and after the book's position, as JSON.
+    /// See [`MapPlayback::nearby`].
+    #[must_use]
+    pub fn map_nearby(&self) -> String {
+        self.map
+            .as_ref()
+            .map_or_else(|| "{}".to_string(), |m| m.nearby(self.position()))
+    }
+
     /// The map job waiting to be opened, for the worker.
     pub fn take_job(&mut self) -> Option<Job> {
         self.map.as_mut().and_then(MapPlayback::take)
@@ -1106,6 +1115,9 @@ mod tests {
         let mut out = vec![0.0; 2048];
         b.render(&mut out, Duration::ZERO);
         assert!(b.take_job().is_none(), "no cue at the start of the book");
+        let near: serde_json::Value = serde_json::from_str(&b.map_nearby()).unwrap();
+        assert_eq!(near["next"]["n"], 0, "before the cue: it is next");
+        assert!(near.get("now").is_none());
 
         // Into chapter two: the cue starts.
         b.seek(Duration::from_secs(4));
@@ -1117,11 +1129,19 @@ mod tests {
         b.finish_job(&job, opened);
         assert!(b.music_loaded());
         assert!(b.map_status().contains("Now: cue 1, Prelude by Yo-Yo Ma"));
+        let near: serde_json::Value = serde_json::from_str(&b.map_nearby()).unwrap();
+        assert_eq!(near["now"]["title"], "Prelude");
+        assert_eq!(near["now"]["artist"], "Yo-Yo Ma");
+        assert_eq!(near["now"]["kind"], "track");
+        assert!(near.get("before").is_none() && near.get("next").is_none());
 
         // Into chapter three: the cue ends. Then back into two before the
         // worker gets to it: the silence job is stale and must be dropped.
         b.seek(Duration::from_secs(8));
         b.render(&mut out, Duration::ZERO);
+        let near: serde_json::Value = serde_json::from_str(&b.map_nearby()).unwrap();
+        assert!(near.get("now").is_none(), "past the cue: a gap");
+        assert_eq!(near["before"]["n"], 0);
         let stale = b.take_job().expect("a silence job");
         assert!(matches!(stale.direction(), Direction::Silence { .. }));
         b.seek(Duration::from_secs(4));
@@ -1133,6 +1153,7 @@ mod tests {
         assert!(b.map_status().contains("Now: cue 1"));
 
         b.clear_map();
+        assert_eq!(b.map_nearby(), "{}");
         assert_eq!(b.map_status(), "No map");
         assert!(!b.has_map());
     }

@@ -230,6 +230,73 @@ impl MapPlayback {
         s
     }
 
+    /// The cues around `at`, for the UI: the one before, the one playing,
+    /// and the next, as JSON. Each is
+    /// `{"n", "startMs", "endMs", "kind", "title", "artist", "why"}`;
+    /// `kind` is track, vibe, silence or missing, and `endMs` is null for
+    /// a last cue that runs to the end. `now` is absent in a gap between
+    /// cues. `{}` when the map is not following the book.
+    #[must_use]
+    pub fn nearby(&self, at: Duration) -> String {
+        let Some(c) = &self.conductor else {
+            return "{}".to_string();
+        };
+        let spans = c.spans();
+        let started = spans.partition_point(|s| s.start <= at);
+        let now = started
+            .checked_sub(1)
+            .filter(|&n| spans[n].end.is_none_or(|e| at < e));
+        let before = match now {
+            Some(n) => n.checked_sub(1),
+            None => started.checked_sub(1),
+        };
+        let next = (started < spans.len()).then_some(started);
+        let mut out = serde_json::Map::new();
+        for (key, n) in [("before", before), ("now", now), ("next", next)] {
+            if let Some(n) = n {
+                out.insert(key.to_string(), self.cue_json(c, n));
+            }
+        }
+        serde_json::Value::Object(out).to_string()
+    }
+
+    fn cue_json(&self, c: &Conductor, n: usize) -> serde_json::Value {
+        let ms = |d: Duration| u64::try_from(d.as_millis()).unwrap_or(u64::MAX);
+        let cue = &c.map().cues[n];
+        let span = c.spans()[n];
+        let named = cue.track.as_ref();
+        let (kind, title, artist) = match &c.resolutions()[n] {
+            Resolution::Track(id) | Resolution::Vibe(id) => {
+                let kind = if matches!(c.resolutions()[n], Resolution::Track(_)) {
+                    "track"
+                } else {
+                    "vibe"
+                };
+                match self.library.item(id) {
+                    Ok(it) => (kind, Some(it.title), it.artist),
+                    Err(_) => (kind, Some(id.to_string()), None),
+                }
+            }
+            Resolution::Silence => ("silence", None, None),
+            Resolution::Missing => (
+                "missing",
+                named
+                    .map(|t| t.title.clone())
+                    .or_else(|| (!cue.vibe.is_empty()).then(|| cue.vibe.join(", "))),
+                named.map(|t| t.artist.clone()),
+            ),
+        };
+        serde_json::json!({
+            "n": n,
+            "startMs": ms(span.start),
+            "endMs": span.end.map(ms),
+            "kind": kind,
+            "title": title,
+            "artist": artist,
+            "why": cue.why,
+        })
+    }
+
     fn describe(&self, c: &Conductor, n: usize) -> String {
         let what = match &c.resolutions()[n] {
             Resolution::Track(id) | Resolution::Vibe(id) => self.library.item(id).map_or_else(

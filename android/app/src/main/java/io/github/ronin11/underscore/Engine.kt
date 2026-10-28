@@ -70,6 +70,9 @@ class Engine(sampleRate: Int, val channels: Int) : AutoCloseable {
     /** One line on the map for the UI. */
     val mapStatus: String get() = nativeMapStatus(h())
 
+    /** The map's cues before, at and after the book's position, as JSON: see `Bridge::map_nearby`. */
+    val mapNearby: String get() = nativeMapNearby(h())
+
     /**
      * Audiobookshelf. All of these talk to the server, so call them from
      * a background thread. Errors come back as a message; null is success.
@@ -211,6 +214,7 @@ class Engine(sampleRate: Int, val channels: Int) : AutoCloseable {
     private external fun nativeHasMusicServer(handle: Long): Boolean
     private external fun nativeHasMap(handle: Long): Boolean
     private external fun nativeMapStatus(handle: Long): String
+    private external fun nativeMapNearby(handle: Long): String
     private external fun nativeServerLogin(handle: Long, url: String, username: String, secret: String): String?
     private external fun nativeServerResume(handle: Long, url: String, access: String, refresh: String?): String?
     private external fun nativeServerCredentials(handle: Long): String?

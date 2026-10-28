@@ -418,6 +418,17 @@ pub extern "system" fn Java_io_github_ronin11_underscore_Engine_nativeHasMap(
 }
 
 /// One line on the map for the UI. Never null.
+/// The map's cues before, at and after the book's position, as JSON.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_io_github_ronin11_underscore_Engine_nativeMapNearby(
+    env: JNIEnv,
+    _this: JObject,
+    handle: jlong,
+) -> jstring {
+    let near = with(handle, "{}".to_string(), |b| b.map_nearby());
+    jstr(&env, &near)
+}
+
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_io_github_ronin11_underscore_Engine_nativeMapStatus(
     env: JNIEnv,
