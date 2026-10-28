@@ -23,8 +23,9 @@ import androidx.appcompat.widget.PopupMenu
 import androidx.core.content.ContextCompat
 
 /**
- * The player screen: a row of tools along the top, then the book, the
- * chapter, a scrub bar across the chapter, and transport. The Music tile
+ * The player screen: a row of tools along the top, the cover as large as
+ * fits, then pinned to the bottom the book, the chapter, a scrub bar across
+ * the chapter, and transport. The Music tile
  * opens the maps screen; CC opens the subtitles. The library,
  * connections, and settings are the other tabs.
  */
@@ -327,7 +328,27 @@ class MainActivity : ServiceActivity() {
             setPadding(dp(24), dp(24), dp(24), dp(16))
         }
 
-        coverView = android.widget.ImageView(this).apply {
+        // The cover keeps its shape and grows to fill the space the rest leaves.
+        // Measured without a height limit, when the screen is too short and
+        // scrolls, it falls back to a modest square.
+        val coverCap = minOf(resources.displayMetrics.widthPixels - dp(48), dp(260))
+        coverView = object : android.widget.ImageView(this) {
+            override fun onMeasure(widthSpec: Int, heightSpec: Int) {
+                val w = View.MeasureSpec.getSize(widthSpec)
+                val h = if (View.MeasureSpec.getMode(heightSpec) == View.MeasureSpec.UNSPECIFIED) {
+                    minOf(w, coverCap)
+                } else {
+                    View.MeasureSpec.getSize(heightSpec)
+                }
+                val d = drawable
+                if (d == null || d.intrinsicWidth <= 0 || d.intrinsicHeight <= 0) {
+                    setMeasuredDimension(w, h)
+                    return
+                }
+                val scale = minOf(w.toFloat() / d.intrinsicWidth, h.toFloat() / d.intrinsicHeight)
+                setMeasuredDimension((d.intrinsicWidth * scale).toInt(), (d.intrinsicHeight * scale).toInt())
+            }
+        }.apply {
             scaleType = android.widget.ImageView.ScaleType.CENTER_CROP
             clipToOutline = true
             background = GradientDrawable().apply { cornerRadius = dp(10).toFloat(); setColor(0x22808080) }
@@ -356,13 +377,20 @@ class MainActivity : ServiceActivity() {
             compoundDrawablePadding = dp(6)
             setOnClickListener { showChapters() }
         }
-        val coverSize = minOf(resources.displayMetrics.widthPixels - dp(96), dp(260))
+        // The frame takes the spare height even without a cover, so the rest stays at the bottom.
+        val coverFrame = android.widget.FrameLayout(this).apply {
+            addView(
+                coverView,
+                android.widget.FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    Gravity.CENTER,
+                ),
+            )
+        }
         body.addView(
-            coverView,
-            LinearLayout.LayoutParams(coverSize, coverSize).apply {
-                gravity = Gravity.CENTER_HORIZONTAL
-                bottomMargin = dp(16)
-            },
+            coverFrame,
+            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f).apply { bottomMargin = dp(16) },
         )
         body.addView(titleView)
         body.addView(seriesView)
@@ -434,7 +462,11 @@ class MainActivity : ServiceActivity() {
         )
 
         root.addView(
-            ScrollView(this).apply { addView(body) },
+            // Fill the screen when it fits, so the cover can grow; scroll when it does not.
+            ScrollView(this).apply {
+                isFillViewport = true
+                addView(body)
+            },
             LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f),
         )
         return root
