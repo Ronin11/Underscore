@@ -324,7 +324,23 @@ class PlaybackService : Service() {
         if (!always && (what == History.What.PLAY || what == History.What.PAUSE) && before == engine.isPlaying) return
         val book = last.getString("key", null) ?: return
         val title = speechName ?: return
-        History.add(this, History.Entry(System.currentTimeMillis(), book, title, what, by, from, engine.positionMs, note))
+        val source = caller
+        caller = null
+        History.add(this, History.Entry(System.currentTimeMillis(), book, title, what, by, from, engine.positionMs, note, source))
+    }
+
+    /** The package that sent the media command being handled, for [logged]. */
+    private var caller: String? = null
+
+    /**
+     * Note which app sent a media session command, then run [command]
+     * with its name. Only valid inside a session callback.
+     */
+    private fun fromController(command: (String) -> Unit) {
+        val pkg = runCatching { session.currentControllerInfo.packageName }.getOrNull()
+        caller = pkg
+        command(History.By.of(this, pkg))
+        caller = null
     }
 
     /** A speed the listener settled on, from the speed dialog. */
@@ -1788,14 +1804,14 @@ class PlaybackService : Service() {
     private fun createSession() {
         session = MediaSessionCompat(this, "underscore").apply {
             setCallback(object : MediaSessionCompat.Callback() {
-                override fun onPlay() = play(History.By.CONTROLS)
-                override fun onPause() = pause(History.By.CONTROLS)
-                override fun onStop() = pause(History.By.CONTROLS)
-                override fun onSkipToNext() = skipForward(History.By.CONTROLS)
-                override fun onSkipToPrevious() = skipBack(History.By.CONTROLS)
-                override fun onFastForward() = skipForward(History.By.CONTROLS)
-                override fun onRewind() = skipBack(History.By.CONTROLS)
-                override fun onSeekTo(pos: Long) = seekMs(pos, History.By.CONTROLS)
+                override fun onPlay() = fromController { play(it) }
+                override fun onPause() = fromController { pause(it) }
+                override fun onStop() = fromController { pause(it) }
+                override fun onSkipToNext() = fromController { skipForward(it) }
+                override fun onSkipToPrevious() = fromController { skipBack(it) }
+                override fun onFastForward() = fromController { skipForward(it) }
+                override fun onRewind() = fromController { skipBack(it) }
+                override fun onSeekTo(pos: Long) = fromController { seekMs(pos, it) }
             })
             setSessionActivity(openActivity())
             isActive = true

@@ -33,6 +33,27 @@ object History {
     object By {
         const val APP = "In the app"
         const val CONTROLS = "Lock screen, headset or watch"
+
+        /**
+         * A name for the app that sent a media command, from its package:
+         * the system's own controllers by what they are, any other app by
+         * its label.
+         */
+        fun of(context: Context, pkg: String?): String = when (pkg) {
+            null -> CONTROLS
+            "com.android.systemui" -> "Lock screen or notification shade"
+            // A wired or Bluetooth button arrives through the old media button path.
+            "android.media.session.MediaController" -> "Headset or car button"
+            "com.android.bluetooth" -> "Bluetooth headset or car"
+            "com.google.android.wearable.app", "com.google.android.apps.wear.companion" -> "Watch"
+            "com.google.android.projection.gearhead" -> "Android Auto"
+            "com.google.android.googlequicksearchbox", "com.google.android.apps.googleassistant" -> "Google Assistant"
+            context.packageName -> APP
+            else -> runCatching {
+                val pm = context.packageManager
+                pm.getApplicationLabel(pm.getApplicationInfo(pkg, 0)).toString()
+            }.getOrDefault(pkg)
+        }
         const val NOTIFICATION = "Notification"
         const val UNPLUGGED = "Headphones unplugged"
         const val OTHER_APP = "Another app's sound"
@@ -45,6 +66,8 @@ object History {
      * One change. Positions are in the book, [fromMs] before and [toMs]
      * after; they are the same for a play or a pause. [note] carries a
      * speed change, a chapter's name, or what was playing before a book.
+     * [source] is the package of the app that sent a media command, kept
+     * so an entry can be named again as the names improve.
      */
     data class Entry(
         val wallMs: Long,
@@ -55,6 +78,7 @@ object History {
         val fromMs: Long,
         val toMs: Long,
         val note: String? = null,
+        val source: String? = null,
     )
 
     private var cache: MutableList<Entry>? = null
@@ -97,6 +121,7 @@ object History {
                             o.getLong("wall"), o.getString("book"), o.getString("title"), o.getString("what"),
                             o.getString("by"), o.getLong("from"), o.getLong("to"),
                             if (o.has("note")) o.getString("note") else null,
+                            if (o.has("source")) o.getString("source") else null,
                         ),
                     )
                 }
@@ -115,6 +140,7 @@ object History {
         put("from", fromMs)
         put("to", toMs)
         note?.let { put("note", it) }
+        source?.let { put("source", it) }
     }
 
     private fun prefs(context: Context) = context.getSharedPreferences("history", Context.MODE_PRIVATE)

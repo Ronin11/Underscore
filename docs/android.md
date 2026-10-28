@@ -190,9 +190,12 @@ that book.
 ## History
 
 Every play, pause, skip, seek, chapter jump, speed change and book opened
-goes in a log with the time and what did it: the app, the lock screen or
-a headset or watch, the notification, unplugged headphones, another
-app's sound, or sleep. Skips mashed within a few seconds of each other
+goes in a log with the time and what did it: the app, the notification,
+unplugged headphones, another app's sound, or sleep. A command through
+the media session carries the package of the app that sent it, which
+the entry keeps as its source and names: the lock screen, a headset or
+car button, the watch, Android Auto, the Assistant, or any other app by
+its label. Skips mashed within a few seconds of each other
 make one entry. Tap the line under the scrub bar to see it, newest
 first. Tapping an entry in the open book goes back to where the book was
 before it, which undoes a small hand on the lock screen. `History.kt`
