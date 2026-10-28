@@ -10,6 +10,24 @@ from pathlib import Path
 import requests
 
 TIMEOUT = 60
+_TAGS = ("(unabridged)", "[unabridged]")
+
+
+def clean_title(title: str, subtitle: str | None) -> str:
+    """A book's title without what store tags add to it: a trailing
+    "(Unabridged)", and the subtitle when the title repeats it after a colon
+    or a dash. The same rules as `clean_title` in crates/library/src/abs.rs."""
+    t = title.strip()
+    while tag := next((g for g in _TAGS if t.lower().endswith(g)), None):
+        t = t[: -len(tag)].rstrip()
+    sub = (subtitle or "").strip()
+    if sub and len(t) > len(sub) and t[-len(sub):].lower() == sub.lower():
+        head = t[: -len(sub)].rstrip()
+        for sep in (":", " -"):
+            if head.endswith(sep):
+                t = head[: -len(sep)].rstrip()
+                break
+    return t or title.strip()
 
 
 class MapServer:
@@ -108,7 +126,7 @@ class Audiobookshelf:
                 others[m["filename"]] = lf["ino"]
         return Book(
             id=id,
-            title=meta.get("title") or "Untitled",
+            title=clean_title(meta.get("title") or "", meta.get("subtitle")) or "Untitled",
             author=meta.get("authorName") or None,
             narrator=meta.get("narratorName") or None,
             asin=meta.get("asin") or None,

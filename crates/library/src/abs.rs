@@ -1010,6 +1010,8 @@ struct Metadata {
     #[serde(default)]
     title: Option<String>,
     #[serde(default)]
+    subtitle: Option<String>,
+    #[serde(default)]
     author_name: Option<String>,
     #[serde(default)]
     authors: Vec<Named>,
@@ -1094,7 +1096,10 @@ impl LibraryItem {
         Some(Item {
             id: ItemId(self.id),
             role: Role::Speech,
-            title: meta.title.unwrap_or_else(|| "Untitled".into()),
+            title: meta.title.map_or_else(
+                || "Untitled".into(),
+                |t| clean_title(&t, meta.subtitle.as_deref()),
+            ),
             artist,
             album: meta.series_name.filter(|s| !s.is_empty()),
             duration: m.duration.filter(|d| *d > 0.0).map(Duration::from_secs_f64),
@@ -1105,6 +1110,38 @@ impl LibraryItem {
     }
 }
 
+/// A book's title without what store tags add to it: a trailing
+/// "(Unabridged)", and the subtitle when the title repeats it after a colon
+/// or a dash. The server keeps the subtitle in its own field.
+fn clean_title(title: &str, subtitle: Option<&str>) -> String {
+    let mut t = title.trim();
+    loop {
+        let lower = t.to_ascii_lowercase();
+        let Some(cut) = ["(unabridged)", "[unabridged]"]
+            .iter()
+            .find_map(|tag| lower.strip_suffix(tag).map(str::len))
+        else {
+            break;
+        };
+        t = t[..cut].trim_end();
+    }
+    if let Some(sub) = subtitle.map(str::trim).filter(|s| !s.is_empty())
+        && t.len() > sub.len()
+        && t.is_char_boundary(t.len() - sub.len())
+        && t[t.len() - sub.len()..].eq_ignore_ascii_case(sub)
+    {
+        let head = t[..t.len() - sub.len()].trim_end();
+        if let Some(head) = head.strip_suffix(':').or_else(|| head.strip_suffix(" -")) {
+            t = head.trim_end();
+        }
+    }
+    if t.is_empty() {
+        title.trim().to_string()
+    } else {
+        t.to_string()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1112,6 +1149,29 @@ mod tests {
     use std::net::TcpListener;
     use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
+
+    #[test]
+    fn titles_lose_store_tags_and_repeated_subtitles() {
+        let sub = Some("Notes on Startups, or How to Build the Future");
+        assert_eq!(clean_title("Zero to One (Unabridged)", sub), "Zero to One");
+        assert_eq!(
+            clean_title(
+                "Willpower: Rediscovering the Greatest Human Strength (Unabridged)",
+                Some("Rediscovering the Greatest Human Strength"),
+            ),
+            "Willpower"
+        );
+        assert_eq!(
+            clean_title("Upgrade [UNABRIDGED] ", Some("A Novel")),
+            "Upgrade"
+        );
+        // A subtitle that is not repeated, or repeated without a separator, stays.
+        assert_eq!(clean_title("Dune", Some("Book One")), "Dune");
+        assert_eq!(clean_title("Red Rising", Some("Rising")), "Red Rising");
+        // Abridged is worth knowing, and a title that is only the tag stays.
+        assert_eq!(clean_title("Dune (Abridged)", None), "Dune (Abridged)");
+        assert_eq!(clean_title("(Unabridged)", None), "(Unabridged)");
+    }
 
     /// One request as the fake server saw it.
     struct Req {
