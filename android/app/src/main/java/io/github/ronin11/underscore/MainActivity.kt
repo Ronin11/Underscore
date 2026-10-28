@@ -24,7 +24,8 @@ import androidx.core.content.ContextCompat
 
 /**
  * The player screen: a row of tools along the top, then the book, the
- * chapter, a scrub bar across the chapter, and transport. The library,
+ * chapter, a scrub bar across the chapter, and transport. The Music tile
+ * opens the maps screen; CC opens the subtitles. The library,
  * connections, and settings are the other tabs.
  */
 class MainActivity : ServiceActivity() {
@@ -37,13 +38,11 @@ class MainActivity : ServiceActivity() {
     private lateinit var seriesView: TextView
     private lateinit var sourceView: TextView
     private lateinit var chapterView: TextView
-    private lateinit var captionView: TextView
     private lateinit var emptyRow: View
     private lateinit var scrub: SeekBar
     private lateinit var elapsed: TextView
     private lateinit var remaining: TextView
     private lateinit var bookLine: TextView
-    private lateinit var musicLine: TextView
     private lateinit var transport: Transport
     private lateinit var speedTile: Tile
     private lateinit var sleepTile: Tile
@@ -54,9 +53,6 @@ class MainActivity : ServiceActivity() {
 
     private val pickSpeech = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         uri?.let { loadBook(it) }
-    }
-    private val pickMap = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        uri?.let { loadMap(it) }
     }
     private val askNotifications = registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
 
@@ -75,25 +71,6 @@ class MainActivity : ServiceActivity() {
         if (!s.loadSpeech(uri, name)) toast("Could not open ${name ?: "file"}")
         refresh()
     }
-
-    private fun loadMap(uri: Uri) {
-        val s = service ?: return
-        val name = displayName(uri)
-        val text = try {
-            contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() }
-        } catch (e: Exception) {
-            null
-        }
-        if (text == null) {
-            toast("Could not read ${name ?: "the map"}")
-            return
-        }
-        s.loadMap(text, name) { problem ->
-            if (problem != null) toast(problem)
-            refresh()
-        }
-    }
-
 
     override fun refresh() {
         val s = service ?: run {
@@ -138,10 +115,6 @@ class MainActivity : ServiceActivity() {
             else -> e.chapterTitle(chapter) ?: "Chapter ${chapter + 1} of $chapters"
         }
         chapterView.visibility = if (loaded) View.VISIBLE else View.GONE
-        val caption = if (!loaded) null else s.subtitles.current(e.positionMs)?.text
-            ?: s.transcribeStatus()?.optString("current")?.takeIf { it.isNotEmpty() && it != "null" }
-        captionView.text = caption ?: ""
-        captionView.visibility = if (caption == null) View.GONE else View.VISIBLE
 
         // The scrub bar spans the chapter, as on a CD; the whole book without marks.
         val start = if (inChapter) e.chapterStartMs(chapter) else 0L
@@ -162,14 +135,6 @@ class MainActivity : ServiceActivity() {
         }
 
         showTransport(transport)
-
-        val music = buildString {
-            if (s.mapName != null) append("Map: ${s.mapName}  ·  ${e.mapStatus}")
-            else if (s.musicName != null) append("Music: ${s.musicName}")
-            s.makingMapLine()?.let { if (isNotEmpty()) append("\n"); append(it) }
-        }
-        musicLine.text = music
-        musicLine.visibility = if (music.isEmpty()) View.GONE else View.VISIBLE
 
         speedTile.value.text = fmtSpeed(speed)
         val left = e.sleepRemainingMs(s.now())
@@ -318,39 +283,9 @@ class MainActivity : ServiceActivity() {
         menu.show()
     }
 
-    private fun musicMenu(anchor: View) {
-        val s = service ?: return
-        val e = s.engine
-        val menu = PopupMenu(this, anchor)
-        menu.menu.add(if (e.musicEnabled) "Turn music off" else "Turn music on").setOnMenuItemClickListener {
-            e.setMusicEnabled(!e.musicEnabled); refresh(); true
-        }
-        val map = menu.menu.addSubMenu("Music map")
-        map.add("Load a map…").setOnMenuItemClickListener {
-            if (s.musicDir == null && !s.engine.hasMusicServer) {
-                toast("Sign in to the music server or set the music folder in Settings first")
-            } else {
-                pickMap.launch(MAP_TYPES)
-            }
-            true
-        }
-        map.add("Clear the map").apply {
-            isEnabled = e.hasMap
-            setOnMenuItemClickListener { s.clearMap(); refresh(); true }
-        }
-        if (s.mapServerUrl != null && s.bookFromServer) {
-            map.add("Maps for this book…").setOnMenuItemClickListener { mapsDialog(); true }
-            map.add("Make a new map").apply {
-                isEnabled = s.bookMaps?.job?.active != true
-                setOnMenuItemClickListener {
-                    s.makeNewMap()
-                    toast("Asked the map server. Music starts as the first chapter is ready.")
-                    true
-                }
-            }
-        }
-        map.add(e.mapStatus).isEnabled = false
-        menu.show()
+    /** The music under the book, and its maps, on their own screen. */
+    private fun openMaps() {
+        startActivity(android.content.Intent(this, MapsActivity::class.java))
     }
 
     private fun openSubtitles() {
@@ -382,7 +317,7 @@ class MainActivity : ServiceActivity() {
         // are the chapter line under the title.
         speedTile = tile("Speed") { speedDialog() }
         sleepTile = tile("Sleep") { sleepMenu(it) }
-        musicTile = tile("Music") { musicMenu(it) }
+        musicTile = tile("Music") { openMaps() }
         textTile = tile("Text") { openSubtitles() }
         textTile.value.text = "CC"
         headerTiles(bar, listOf(speedTile, sleepTile, musicTile, textTile))
@@ -412,14 +347,14 @@ class MainActivity : ServiceActivity() {
         sourceView = label(13f).apply { alpha = 0.7f; setPadding(0, dp(4), 0, 0) }
         chapterView = label(15f).apply {
             setPadding(0, dp(16), 0, 0)
+            // The chapters icon sits just before the chapter's name; tapping either lists them.
+            ContextCompat.getDrawable(context, R.drawable.ic_chapters)?.mutate()?.let { icon ->
+                icon.setTint(currentTextColor)
+                icon.setBounds(0, 0, dp(18), dp(18))
+                setCompoundDrawablesRelative(icon, null, null, null)
+            }
+            compoundDrawablePadding = dp(6)
             setOnClickListener { showChapters() }
-        }
-        captionView = label(15f, Gravity.START).apply {
-            setTypeface(typeface, android.graphics.Typeface.ITALIC)
-            alpha = 0.85f
-            maxLines = 4
-            setPadding(0, dp(12), 0, 0)
-            setOnClickListener { openSubtitles() }
         }
         val coverSize = minOf(resources.displayMetrics.widthPixels - dp(96), dp(260))
         body.addView(
@@ -432,8 +367,12 @@ class MainActivity : ServiceActivity() {
         body.addView(titleView)
         body.addView(seriesView)
         body.addView(sourceView)
-        body.addView(chapterView)
-        body.addView(captionView)
+        body.addView(
+            chapterView,
+            LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                gravity = Gravity.CENTER_HORIZONTAL
+            },
+        )
 
         emptyRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -494,9 +433,6 @@ class MainActivity : ServiceActivity() {
             },
         )
 
-        musicLine = label(12f).apply { alpha = 0.7f; setPadding(0, dp(8), 0, 0) }
-        body.addView(musicLine)
-
         root.addView(
             ScrollView(this).apply { addView(body) },
             LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f),
@@ -506,8 +442,6 @@ class MainActivity : ServiceActivity() {
 
     companion object {
         private val AUDIO_TYPES = arrayOf("audio/*", "application/ogg", "video/mp4")
-        // Maps are TOML; the picker rarely knows that type, so allow anything.
-        private val MAP_TYPES = arrayOf("*/*")
         // The engine's own limits; the slider covers the same range.
         private const val MIN_SPEED = 0.5f
         private const val MAX_SPEED = 3.5f

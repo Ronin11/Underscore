@@ -64,6 +64,8 @@ android/         Gradle project. Engine.kt (JNI wrapper), PlaybackService.kt
                  and the tabs), four tabs: MainActivity.kt (the player),
                  BooksActivity.kt (the library; holding a book opens BookActivity.kt), ConnectionsActivity.kt
                  (servers, music folder, sleep sources), SettingsActivity.kt;
+                 MapsActivity.kt (the music and maps under the open book,
+                 from the player's Music tile);
                  DebugActivity.kt, BugReport.kt, Sleep.kt (the sources that
                  notice the listener fell asleep), SleepSetup.kt (their
                  setup and test screens), Shake.kt, Subtitles.kt and SubtitlesActivity.kt

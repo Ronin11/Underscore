@@ -67,6 +67,12 @@
             android:parentActivityName=".MainActivity" />
 
         <activity
+            android:name=".MapsActivity"
+            android:exported="false"
+            android:label="Music"
+            android:parentActivityName=".MainActivity" />
+
+        <activity
             android:name=".DebugActivity"
             android:exported="false"
             android:label="Debug"

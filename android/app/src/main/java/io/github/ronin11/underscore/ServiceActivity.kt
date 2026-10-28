@@ -594,6 +594,38 @@ abstract class ServiceActivity : AppCompatActivity() {
             .show()
     }
 
+    /** A long list of time and text, in a full-height dialog. */
+    protected fun lines(title: String, items: List<Pair<String, String>>) {
+        val list = android.widget.ListView(this).apply {
+            adapter = object : android.widget.BaseAdapter() {
+                override fun getCount() = items.size
+                override fun getItem(position: Int) = items[position]
+                override fun getItemId(position: Int) = position.toLong()
+                override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
+                    val box = convertView as? LinearLayout ?: LinearLayout(this@ServiceActivity).apply {
+                        orientation = LinearLayout.VERTICAL
+                        setPadding(dp(20), dp(6), dp(20), dp(6))
+                        addView(TextView(context).apply { textSize = 12f; alpha = 0.6f })
+                        addView(TextView(context).apply { textSize = 15f })
+                    }
+                    val (head, body) = items[position]
+                    (box.getChildAt(0) as TextView).text = head
+                    (box.getChildAt(1) as TextView).apply {
+                        text = body
+                        visibility = if (body.isEmpty()) View.GONE else View.VISIBLE
+                    }
+                    return box
+                }
+            }
+        }
+        AlertDialog.Builder(this)
+            .setTitle(title)
+            .setView(list)
+            .setPositiveButton("Close", null)
+            .show()
+            .window?.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, (resources.displayMetrics.heightPixels * 0.85).toInt())
+    }
+
     /** A horizontal rule between groups. */
     protected fun divider(): View = View(this).apply {
         setBackgroundColor(0x22808080)

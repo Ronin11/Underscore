@@ -5,11 +5,9 @@ import android.graphics.drawable.GradientDrawable
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
-import android.widget.BaseAdapter
 import android.widget.Button
 import android.widget.ImageView
 import android.widget.LinearLayout
-import android.widget.ListView
 import android.widget.ScrollView
 import android.widget.TextView
 import androidx.appcompat.app.AlertDialog
@@ -253,38 +251,6 @@ class BookActivity : ServiceActivity() {
                 if (shown.isNullOrEmpty()) toast("No transcript yet. The map server makes one with a map.") else lines("Transcript", shown)
             }
         }, "underscore-book-transcript").start()
-    }
-
-    /** A long list of time and text, in a full-height dialog. */
-    private fun lines(title: String, items: List<Pair<String, String>>) {
-        val list = ListView(this).apply {
-            adapter = object : BaseAdapter() {
-                override fun getCount() = items.size
-                override fun getItem(position: Int) = items[position]
-                override fun getItemId(position: Int) = position.toLong()
-                override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
-                    val box = convertView as? LinearLayout ?: LinearLayout(this@BookActivity).apply {
-                        orientation = LinearLayout.VERTICAL
-                        setPadding(dp(20), dp(6), dp(20), dp(6))
-                        addView(TextView(context).apply { textSize = 12f; alpha = 0.6f })
-                        addView(TextView(context).apply { textSize = 15f })
-                    }
-                    val (head, body) = items[position]
-                    (box.getChildAt(0) as TextView).text = head
-                    (box.getChildAt(1) as TextView).apply {
-                        text = body
-                        visibility = if (body.isEmpty()) View.GONE else View.VISIBLE
-                    }
-                    return box
-                }
-            }
-        }
-        AlertDialog.Builder(this)
-            .setTitle(title)
-            .setView(list)
-            .setPositiveButton("Close", null)
-            .show()
-            .window?.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, (resources.displayMetrics.heightPixels * 0.85).toInt())
     }
 
     override fun buildUi(): View {

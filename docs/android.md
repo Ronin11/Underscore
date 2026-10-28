@@ -36,9 +36,11 @@ A Kotlin shell over the Rust engine. The files that matter:
   now; removing a server forgets its sign-in. The map server
   (`docs/map-server.md`) needs only its address; it signs in through
   Audiobookshelf. With it, opening a book loads its default map or asks
-  which, and a book with none gets one made, a chapter at a time. The
-  Music button has "Maps for this book…" and "Make a new map", and the
-  music line says how far a map being made has got.
+  which, and a book with none gets one made, a chapter at a time.
+- `MapsActivity.kt` is the music screen, opened by the player's Music
+  tile: what plays now, music on or off, the open book's maps on the map
+  server (tap one to play the book with it or read it), "Make a new map"
+  and how far one being made has got, and a map loaded from a file.
 - `SettingsActivity.kt` is the Settings tab. It edits `Settings.kt`, one
   preferences file the service watches and pushes into the engine: skip
   lengths, rewind on resume, keep the screen on, shake to undo sleep, the
@@ -55,12 +57,12 @@ position; see "Coming back" below.
 
 ## Music maps
 
-Set the music folder under Connections, then load a map from the player's
-Music menu (`docs/music-map.md`). The folder is a document-tree pick
+Set the music folder under Connections, then load a map from the music
+screen, which the player's Music tile opens (`docs/music-map.md`). The folder is a document-tree pick
 that the settings screen turns into a path on device storage, which is
 why the app asks for the audio permission: the engine scans the folder
 by path, probing every audio file for tags. The scan runs on its own
-thread and the app bar says when it is done; the Music menu shows how
+thread and the app bar says when it is done; the music screen shows how
 many cues found a track.
 
 From then on the engine asks the conductor where the book is on every
@@ -157,8 +159,7 @@ both each time it opens the book:
   transcriber's format: `{"chapters": [{"segments": [{"start", "end",
   "text"}]}]}`, times in seconds from the start of the book. It becomes
   the book's transcript, marked whole, so the phone never transcribes that
-  book, and the player shows its captions even with phone transcription
-  off.
+  book, and the subtitles show it even with phone transcription off.
 
 Audiobookshelf lists every file beside a book, and
 `GET /api/items/{id}/file/{ino}` reads one with plain access to the book.
