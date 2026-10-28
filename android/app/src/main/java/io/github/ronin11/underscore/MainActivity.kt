@@ -128,6 +128,7 @@ class MainActivity : ServiceActivity() {
         scrub.isEnabled = dur > 0
         elapsed.text = fmt(pos - start)
         remaining.text = if (dur > 0) "-${fmt(end - pos)}" else "--:--"
+        bookLine.visibility = if (dur > 0) View.VISIBLE else View.INVISIBLE
         bookLine.text = if (dur > 0) {
             val left = ((dur - pos) / speed).toLong()
             "${fmt(pos)} of ${fmt(dur)}  ·  ${fmt(left)} left at ${fmtSpeed(speed)}"
@@ -173,7 +174,7 @@ class MainActivity : ServiceActivity() {
         AlertDialog.Builder(this)
             .setTitle("Chapters")
             .setSingleChoiceItems(items, e.currentChapter) { dialog, which ->
-                e.seekChapter(which)
+                service?.seekChapter(which)
                 dialog.dismiss()
                 refresh()
             }
@@ -183,7 +184,9 @@ class MainActivity : ServiceActivity() {
 
     /** A slider across the speed range with the usual presets under it. */
     private fun speedDialog() {
-        val e = service?.engine ?: return
+        val s = service ?: return
+        val e = s.engine
+        val before = e.speed
         val readout = label(28f)
         val slider = SeekBar(this).apply {
             max = ((MAX_SPEED - MIN_SPEED) / SPEED_STEP).toInt()
@@ -222,8 +225,75 @@ class MainActivity : ServiceActivity() {
         AlertDialog.Builder(this)
             .setTitle("Narration speed")
             .setView(box)
-            .setPositiveButton("Done") { _, _ -> refresh() }
+            .setPositiveButton("Done", null)
+            .setOnDismissListener {
+                s.noteSpeed(before, e.speed)
+                refresh()
+            }
             .show()
+    }
+
+    /**
+     * Everything that moved the book lately, newest first, and what did
+     * it. Tapping an entry in this book goes back to where it was before.
+     */
+    private fun showHistory() {
+        val s = service ?: return
+        val entries = History.entries(this)
+        if (entries.isEmpty()) {
+            toast("Nothing yet. Plays, pauses, skips and jumps show here.")
+            return
+        }
+        val book = s.lastKey
+        val items = entries.map { h ->
+            val head = "${whenText(h.wallMs)}  ·  ${h.by}"
+            val body = historyText(h) + if (h.book != book) "\nin ${h.title}" else ""
+            android.text.SpannableStringBuilder().apply {
+                append(head, android.text.style.RelativeSizeSpan(0.8f), 0)
+                setSpan(android.text.style.ForegroundColorSpan(0x99808080.toInt()), 0, head.length, 0)
+                append("\n")
+                append(body)
+            }
+        }.toTypedArray<CharSequence>()
+        AlertDialog.Builder(this)
+            .setTitle("History")
+            .setItems(items) { _, which ->
+                val h = entries[which]
+                when {
+                    h.book != book -> toast("That was in ${h.title}. Open it first.")
+                    else -> {
+                        s.returnTo(h.fromMs)
+                        toast("Back to ${fmt(h.fromMs)}")
+                        refresh()
+                    }
+                }
+            }
+            .setNegativeButton("Close", null)
+            .show()
+            .window?.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, (resources.displayMetrics.heightPixels * 0.85).toInt())
+    }
+
+    private fun historyText(h: History.Entry): String {
+        val moved = "${fmt(h.fromMs)} → ${fmt(h.toMs)}"
+        return when (h.what) {
+            History.What.PLAY -> "Played at ${fmt(h.toMs)}"
+            History.What.PAUSE -> if (h.by == History.By.ENGINE) "Reached the end" else "Paused at ${fmt(h.toMs)}"
+            History.What.BACK -> "Skipped back ${fmt(h.fromMs - h.toMs)}, $moved"
+            History.What.FORWARD -> "Skipped forward ${fmt(h.toMs - h.fromMs)}, $moved"
+            History.What.SEEK -> "Moved $moved"
+            History.What.CHAPTER -> "Jumped to ${h.note ?: "a chapter"}, $moved"
+            History.What.SPEED -> "Speed ${h.note?.replace(" ", " → ")}"
+            History.What.OPEN -> "Opened ${h.title}" + (h.note?.let { ", leaving $it" } ?: "")
+            History.What.RETURN -> "Went back to ${fmt(h.toMs)} from the history"
+            else -> h.what
+        }
+    }
+
+    /** A time of day, with the day when it was not today. */
+    private fun whenText(wallMs: Long): String {
+        val flags = android.text.format.DateUtils.FORMAT_SHOW_TIME or
+            if (android.text.format.DateUtils.isToday(wallMs)) 0 else android.text.format.DateUtils.FORMAT_SHOW_DATE
+        return android.text.format.DateUtils.formatDateTime(this, wallMs, flags)
     }
 
     /**
@@ -449,8 +519,24 @@ class MainActivity : ServiceActivity() {
                 addView(remaining, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
             },
         )
-        bookLine = label(12f).apply { alpha = 0.7f; setPadding(0, dp(4), 0, 0) }
-        body.addView(bookLine)
+        bookLine = label(12f).apply {
+            alpha = 0.7f
+            setPadding(0, dp(4), 0, dp(4))
+            // The history icon leads the line; tapping it lists what moved the book.
+            ContextCompat.getDrawable(context, R.drawable.ic_history)?.mutate()?.let { icon ->
+                icon.setTint(currentTextColor)
+                icon.setBounds(0, 0, dp(14), dp(14))
+                setCompoundDrawablesRelative(icon, null, null, null)
+            }
+            compoundDrawablePadding = dp(4)
+            setOnClickListener { showHistory() }
+        }
+        body.addView(
+            bookLine,
+            LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                gravity = Gravity.CENTER_HORIZONTAL
+            },
+        )
 
         // Transport: previous chapter, back, play, forward, next chapter.
         transport = transport()

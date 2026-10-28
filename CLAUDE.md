@@ -70,7 +70,8 @@ android/         Gradle project. Engine.kt (JNI wrapper), PlaybackService.kt
                  notice the listener fell asleep), SleepSetup.kt (their
                  setup and test screens), Shake.kt, Subtitles.kt and SubtitlesActivity.kt
                  (the line being read, speakers in color), Storage.kt (each
-                 book's files and map, for keeping books offline). UI
+                 book's files and map, for keeping books offline), History.kt
+                 (what moved the book and what did it). UI
                  built in code, no layout XML; icons are vector
                  drawables under res/drawable.
 android/wear/    The Wear OS app: Health Services says the wearer is asleep,

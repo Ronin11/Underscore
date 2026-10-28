@@ -115,6 +115,9 @@ class PlaybackService : Service() {
     private val musicPrefs by lazy { getSharedPreferences("music_server", Context.MODE_PRIVATE) }
     /** The last book and map, and where the listener was, for the next start. */
     private val last by lazy { getSharedPreferences("last", Context.MODE_PRIVATE) }
+
+    /** The open book's key, such as abs:<id> or file:<uri>, or null. */
+    val lastKey: String? get() = last.getString("key", null)
     /** Before [storage]: which cached file was which book, by title. Read once, to carry over. */
     private val downloadNames by lazy { getSharedPreferences("downloads", Context.MODE_PRIVATE) }
     /** Before maps were kept by book: the last book's map. Read once, to carry over. */
@@ -188,6 +191,8 @@ class PlaybackService : Service() {
     private var shownPositionMs = 0L
     private var shownAtMs = 0L
     private var shownSpeed = 0f
+    /** Whether the engine was playing at the last look, to catch it stopping on its own. */
+    private var wasPlaying = false
     private var shownTitle: String? = null
     private var shownChapter: String? = null
     private var shownDurationMs = -1L
@@ -196,7 +201,7 @@ class PlaybackService : Service() {
     private val noisyReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
             // Headphones unplugged: do not read the book out of the speaker.
-            if (engine.isPlaying) pause()
+            if (engine.isPlaying) pause(History.By.UNPLUGGED)
         }
     }
 
@@ -205,21 +210,21 @@ class PlaybackService : Service() {
         when (change) {
             AudioManager.AUDIOFOCUS_LOSS -> {
                 resumeOnFocusGain = false
-                if (engine.isPlaying) pause()
+                if (engine.isPlaying) pause(History.By.OTHER_APP)
             }
             AudioManager.AUDIOFOCUS_LOSS_TRANSIENT,
             AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> {
                 // Spoken word is not worth ducking; pause and come back.
                 resumeOnFocusGain = engine.isPlaying
                 if (resumeOnFocusGain) {
-                    engine.pause(now())
+                    logged(History.What.PAUSE, History.By.OTHER_APP) { engine.pause(now()) }
                     publishState()
                 }
             }
             AudioManager.AUDIOFOCUS_GAIN -> {
                 if (resumeOnFocusGain) {
                     resumeOnFocusGain = false
-                    engine.play(now())
+                    logged(History.What.PLAY, History.By.OTHER_APP) { engine.play(now()) }
                     publishState()
                 }
             }
@@ -234,6 +239,7 @@ class PlaybackService : Service() {
             if (engine.isPlaying && now() - lastSaveMs > SAVE_EVERY_MS) savePosition()
             if (transcribing) engine.transcribePosition(engine.positionMs)
             if (downloading) checkDownload()
+            watchStop()
             watchSleep()
             watchServerMap()
             mainHandler.postDelayed(this, 1000)
@@ -269,11 +275,11 @@ class PlaybackService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
-            ACTION_PLAY -> play()
-            ACTION_PAUSE -> pause()
-            ACTION_TOGGLE -> toggle()
-            ACTION_BACK -> skipBack()
-            ACTION_FORWARD -> skipForward()
+            ACTION_PLAY -> play(History.By.NOTIFICATION)
+            ACTION_PAUSE -> pause(History.By.NOTIFICATION)
+            ACTION_TOGGLE -> toggle(History.By.NOTIFICATION)
+            ACTION_BACK -> skipBack(History.By.NOTIFICATION)
+            ACTION_FORWARD -> skipForward(History.By.NOTIFICATION)
             ACTION_OPENID_RETURN -> intent.data?.let { serverOpenIdFinish(it) }
             ACTION_ASLEEP -> asleep(
                 intent.getLongExtra(Sleep.EXTRA_SINCE, 0).takeIf { it > 0 },
@@ -305,43 +311,79 @@ class PlaybackService : Service() {
 
     fun now(): Long = SystemClock.elapsedRealtime()
 
+    /**
+     * Run [change] and write it in the history, with where the book was
+     * before and after. Nothing is written without a book open, or for a
+     * play or pause that changed nothing, unless [always].
+     */
+    private fun logged(what: String, by: String, note: String? = null, always: Boolean = false, change: () -> Unit) {
+        val from = engine.positionMs
+        val before = engine.isPlaying
+        change()
+        wasPlaying = engine.isPlaying
+        if (!always && (what == History.What.PLAY || what == History.What.PAUSE) && before == engine.isPlaying) return
+        val book = last.getString("key", null) ?: return
+        val title = speechName ?: return
+        History.add(this, History.Entry(System.currentTimeMillis(), book, title, what, by, from, engine.positionMs, note))
+    }
+
+    /** A speed the listener settled on, from the speed dialog. */
+    fun noteSpeed(from: Float, to: Float) {
+        if (from != to) logged(History.What.SPEED, History.By.APP, "%.1fx %.1fx".format(java.util.Locale.US, from, to)) {}
+    }
+
+    /** Back to where a history entry says the book was. */
+    fun returnTo(atMs: Long) {
+        logged(History.What.RETURN, History.By.APP) { engine.seekMs(atMs) }
+        publishState()
+    }
+
+    /** The engine stopped on its own: a sleep timer, or the end of the book. */
+    private fun watchStop() {
+        if (wasPlaying && !engine.isPlaying) {
+            val by = if (engine.positionMs >= engine.durationMs - 1000) History.By.ENGINE else History.By.SLEEP
+            logged(History.What.PAUSE, by, always = true) {}
+        }
+        wasPlaying = engine.isPlaying
+    }
+
     /** Start or resume. Does nothing if another app refuses to give up audio focus. */
-    fun play() {
+    fun play(by: String = History.By.APP) {
         if (!requestFocus()) return
         stoppedFor?.let { by ->
             // Played again soon after a sleep stop: maybe it came too soon.
             SleepLog.add(this, "played again ${(now() - stoppedAtMs) / 60_000} min after the stop for $by")
             stoppedFor = null
         }
-        engine.play(now())
+        logged(History.What.PLAY, by) { engine.play(now()) }
         session.isActive = true
         publishState()
     }
 
-    fun pause() {
-        engine.pause(now())
+    fun pause(by: String = History.By.APP) {
+        logged(History.What.PAUSE, by) { engine.pause(now()) }
         resumeOnFocusGain = false
         publishState()
         syncServer()
         savePosition()
     }
 
-    fun toggle() {
-        if (engine.isPlaying) pause() else play()
+    fun toggle(by: String = History.By.APP) {
+        if (engine.isPlaying) pause(by) else play(by)
     }
 
-    fun skipBack() {
-        engine.skipBack()
+    fun skipBack(by: String = History.By.APP) {
+        logged(History.What.BACK, by) { engine.skipBack() }
         publishState()
     }
 
-    fun skipForward() {
-        engine.skipForward()
+    fun skipForward(by: String = History.By.APP) {
+        logged(History.What.FORWARD, by) { engine.skipForward() }
         publishState()
     }
 
-    fun seekMs(toMs: Long) {
-        engine.seekMs(toMs)
+    fun seekMs(toMs: Long, by: String = History.By.APP) {
+        logged(History.What.SEEK, by) { engine.seekMs(toMs) }
         publishState()
     }
 
@@ -359,14 +401,19 @@ class PlaybackService : Service() {
         if (chapter < 0) return
         val intoChapter = engine.positionMs - engine.chapterStartMs(chapter)
         val target = if (intoChapter > 3000 || chapter == 0) chapter else chapter - 1
-        engine.seekChapter(target)
-        publishState()
+        seekChapter(target)
     }
 
     fun nextChapter() {
         val chapter = engine.currentChapter
         if (chapter < 0 || chapter + 1 >= engine.chapterCount) return
-        engine.seekChapter(chapter + 1)
+        seekChapter(chapter + 1)
+    }
+
+    /** To the start of chapter [index], from the transport or the chapter list. */
+    fun seekChapter(index: Int) {
+        val name = engine.chapterTitle(index) ?: "Chapter ${index + 1}"
+        logged(History.What.CHAPTER, History.By.APP, name) { engine.seekChapter(index) }
         publishState()
     }
 
@@ -400,9 +447,13 @@ class PlaybackService : Service() {
         }
     }
 
+    /** The book being left and where, for the history's note on opening another. */
+    private fun leaving(): String? = speechName?.let { "$it at ${clock(engine.positionMs)}" }
+
     /** Open [uri] read-only and hand the descriptor to the engine. */
     fun loadSpeech(uri: Uri, name: String?): Boolean {
         bookChosen = true
+        val opening = leaving()
         // Keep the right to read it after a restart, to open it again then.
         runCatching { contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) }
         val ok = openSpeech(uri, name)
@@ -411,6 +462,7 @@ class PlaybackService : Service() {
                 putString("kind", "file").putString("uri", uri.toString()).putString("name", name)
             }
             notePlayed("file:$uri", name ?: "book")
+            logged(History.What.OPEN, History.By.APP, opening) {}
             showFileDetails(uri)
             followWithTranscriber()
         }
@@ -638,7 +690,7 @@ class PlaybackService : Service() {
                 "file" -> last.getString("uri", null)?.let { uri ->
                     mainHandler.post {
                         if (!bookChosen && openSpeech(Uri.parse(uri), name)) {
-                            if (at > 0) seekMs(at)
+                            if (at > 0) engine.seekMs(at)
                             showFileDetails(Uri.parse(uri))
                             followWithTranscriber()
                         }
@@ -1156,7 +1208,7 @@ class PlaybackService : Service() {
                 stoppedFor = null
                 last.edit().remove("dozedAtMs").apply()
                 SleepLog.add(this, "shaken ${(now() - stoppedAtMs) / 1000} s after the stop for $stopped: too soon, playing again")
-                play()
+                play(History.By.SHAKE)
             }
             engine.isPlaying && manualSleepMs > 0 && engine.sleepRemainingMs(now()) >= 0 -> {
                 engine.setSleepMs(manualSleepMs, now())
@@ -1177,7 +1229,7 @@ class PlaybackService : Service() {
         if (at < 0) return
         last.edit().remove("dozedAtMs").apply()
         SleepLog.add(this, "went back to the mark at ${clock(at)} from ${clock(engine.positionMs)}")
-        seekMs(at)
+        seekMs(at, History.By.SLEEP)
     }
 
     /** Remember where the listener is in the current book. */
@@ -1293,6 +1345,7 @@ class PlaybackService : Service() {
     /** Download a server book into the cache and load it. [onDone] gets null or a reason. */
     fun openServerBook(book: ServerBook, onDone: (String?) -> Unit) {
         bookChosen = true
+        val opening = leaving()
         serverBusy = "Opening ${book.title}…"
         Thread({
             var problem = engine.serverOpen(book.id, libraryCache.absolutePath)
@@ -1321,6 +1374,7 @@ class PlaybackService : Service() {
                         )
                     }
                     notePlayed("abs:${book.id}", book.title)
+                    logged(History.What.OPEN, History.By.APP, opening) {}
                     if (file != null) {
                         followWithTranscriber()
                         noteAudio(file)
@@ -1734,14 +1788,14 @@ class PlaybackService : Service() {
     private fun createSession() {
         session = MediaSessionCompat(this, "underscore").apply {
             setCallback(object : MediaSessionCompat.Callback() {
-                override fun onPlay() = play()
-                override fun onPause() = pause()
-                override fun onStop() = pause()
-                override fun onSkipToNext() = skipForward()
-                override fun onSkipToPrevious() = skipBack()
-                override fun onFastForward() = skipForward()
-                override fun onRewind() = skipBack()
-                override fun onSeekTo(pos: Long) = seekMs(pos)
+                override fun onPlay() = play(History.By.CONTROLS)
+                override fun onPause() = pause(History.By.CONTROLS)
+                override fun onStop() = pause(History.By.CONTROLS)
+                override fun onSkipToNext() = skipForward(History.By.CONTROLS)
+                override fun onSkipToPrevious() = skipBack(History.By.CONTROLS)
+                override fun onFastForward() = skipForward(History.By.CONTROLS)
+                override fun onRewind() = skipBack(History.By.CONTROLS)
+                override fun onSeekTo(pos: Long) = seekMs(pos, History.By.CONTROLS)
             })
             setSessionActivity(openActivity())
             isActive = true

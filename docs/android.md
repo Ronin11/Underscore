@@ -18,8 +18,9 @@ A Kotlin shell over the Rust engine. The files that matter:
   activity; switching swaps them without animation, and the player stays
   underneath, so Back from any tab lands on it.
 - `MainActivity.kt` is the Player tab: speed, sleep, and music in the
-  app bar, then the book and chapter (tap the chapter line for the
-  list), a scrub bar across the current chapter with time left, and
+  app bar, the cover as large as fits, then at the bottom the book and
+  chapter (tap the chapter line for the list), a scrub bar across the
+  current chapter with time left (tap the line under it for the history), and
   previous and next chapter around the skip and play buttons. It has no
   menu. Opening a file and keeping a book offline live on the Library
   tab, and storage on Settings.
@@ -185,6 +186,17 @@ the read grant the picker gave, which the app keeps. Each book's map is
 kept in the app's private files, under `files/maps`, so opening a book
 again brings its map back, offline too. Clearing the map forgets it for
 that book.
+
+## History
+
+Every play, pause, skip, seek, chapter jump, speed change and book opened
+goes in a log with the time and what did it: the app, the lock screen or
+a headset or watch, the notification, unplugged headphones, another
+app's sound, or sleep. Skips mashed within a few seconds of each other
+make one entry. Tap the line under the scrub bar to see it, newest
+first. Tapping an entry in the open book goes back to where the book was
+before it, which undoes a small hand on the lock screen. `History.kt`
+keeps the last 300 entries in the app's preferences.
 
 ## Subtitles
 
