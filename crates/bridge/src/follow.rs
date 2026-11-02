@@ -211,7 +211,12 @@ impl MapPlayback {
         let found = c
             .resolutions()
             .iter()
-            .filter(|r| matches!(r, Resolution::Track(_) | Resolution::Vibe(_)))
+            .filter(|r| {
+                matches!(
+                    r,
+                    Resolution::Track(_) | Resolution::Vibe(_) | Resolution::Axes(_)
+                )
+            })
             .count();
         let asked = c
             .resolutions()
@@ -266,11 +271,11 @@ impl MapPlayback {
         let span = c.spans()[n];
         let named = cue.track.as_ref();
         let (kind, title, artist) = match &c.resolutions()[n] {
-            Resolution::Track(id) | Resolution::Vibe(id) => {
-                let kind = if matches!(c.resolutions()[n], Resolution::Track(_)) {
-                    "track"
-                } else {
-                    "vibe"
+            Resolution::Track(id) | Resolution::Vibe(id) | Resolution::Axes(id) => {
+                let kind = match c.resolutions()[n] {
+                    Resolution::Track(_) => "track",
+                    Resolution::Axes(_) => "axes",
+                    _ => "vibe",
                 };
                 match self.library.item(id) {
                     Ok(it) => (kind, Some(it.title), it.artist),
@@ -282,7 +287,16 @@ impl MapPlayback {
                 "missing",
                 named
                     .map(|t| t.title.clone())
-                    .or_else(|| (!cue.vibe.is_empty()).then(|| cue.vibe.join(", "))),
+                    .or_else(|| (!cue.vibe.is_empty()).then(|| cue.vibe.join(", ")))
+                    .or_else(|| {
+                        cue.has_axes().then(|| {
+                            format!(
+                                "energy {}, valence {}",
+                                cue.energy.unwrap_or(2.5),
+                                cue.valence.unwrap_or(0.0)
+                            )
+                        })
+                    }),
                 named.map(|t| t.artist.clone()),
             ),
         };

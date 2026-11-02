@@ -142,6 +142,15 @@ impl MapServer {
         self.ok(books, "GET", &format!("/api/books/{id}/maps"), None)
     }
 
+    /// Every song's coordinates on the scene axes, as a JSON object from
+    /// song id to `{energy, valence, voice}`, as the worker published them.
+    ///
+    /// # Errors
+    /// Not reachable, or refused.
+    pub fn music_axes(&self, books: &Audiobookshelf) -> Result<String, Error> {
+        self.ok(books, "GET", "/api/music/axes", None)
+    }
+
     /// One map, as TOML.
     ///
     /// # Errors

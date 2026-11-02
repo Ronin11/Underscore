@@ -61,6 +61,10 @@ class MapServer:
         r = self.s.put(f"{self.url}/api/worker/books/{book}/voices", json=voices, timeout=TIMEOUT)
         r.raise_for_status()
 
+    def put_music_axes(self, axes: dict) -> None:
+        r = self.s.put(f"{self.url}/api/worker/music/axes", json=axes, timeout=TIMEOUT)
+        r.raise_for_status()
+
     def put_transcript(self, book: str, transcript: dict) -> None:
         r = self.s.put(f"{self.url}/api/worker/books/{book}/transcript", json=transcript, timeout=TIMEOUT)
         r.raise_for_status()

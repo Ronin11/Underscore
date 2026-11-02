@@ -1265,6 +1265,31 @@ pub extern "system" fn Java_io_github_ronin11_underscore_Engine_nativeMapServerB
     answer(maps.book(&books, &id).map_err(|e| e.to_string()))
 }
 
+/// Fetch the songs' coordinates from the map server and keep them beside
+/// the music server's cache. Returns how many songs got them, or -1 with no
+/// map or music server, -2 when the fetch failed. Network I/O.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_io_github_ronin11_underscore_Engine_nativeMapServerMusicAxes(
+    mut env: JNIEnv,
+    _this: JObject,
+    handle: jlong,
+    cache_dir: JString,
+) -> jint {
+    let Some(cache_dir) = string(&mut env, &cache_dir) else {
+        return -1;
+    };
+    let Some((maps, books)) = with(handle, None, |b| b.map_server()) else {
+        return -1;
+    };
+    let Some(music) = with(handle, None, |b| b.music_server()) else {
+        return -1;
+    };
+    match Bridge::refresh_music_axes(&maps, &books, &music, &PathBuf::from(cache_dir)) {
+        Ok(n) => i32::try_from(n).unwrap_or(i32::MAX),
+        Err(_) => -2,
+    }
+}
+
 /// Map `id` as TOML, or null when it cannot be had. Network I/O.
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_io_github_ronin11_underscore_Engine_nativeMapServerMap(

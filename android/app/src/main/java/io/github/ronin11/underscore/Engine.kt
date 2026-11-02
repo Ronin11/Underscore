@@ -131,6 +131,8 @@ class Engine(sampleRate: Int, val channels: Int) : AutoCloseable {
     fun mapServerBook(id: String): String = nativeMapServerBook(h(), id)
     /** Map [id] as TOML, or null. Network. */
     fun mapServerMap(id: String): String? = nativeMapServerMap(h(), id)
+    /** Fetch every song's coordinates from the map server into the library cache. Network. */
+    fun mapServerMusicAxes(cacheDir: String): Int = nativeMapServerMusicAxes(h(), cacheDir)
     /** Ask for a map for book [id] from [chapter] on: the job as JSON, or `{"error": ...}`. Network. */
     fun mapServerBuild(id: String, chapter: Int): String = nativeMapServerBuild(h(), id, chapter)
     /** Make [map] the map book [id] opens with: JSON, or `{"error": ...}`. Network. */
@@ -239,6 +241,7 @@ class Engine(sampleRate: Int, val channels: Int) : AutoCloseable {
     private external fun nativeMapServerCheck(handle: Long): String?
     private external fun nativeMapServerBook(handle: Long, id: String): String
     private external fun nativeMapServerMap(handle: Long, id: String): String?
+    private external fun nativeMapServerMusicAxes(handle: Long, cacheDir: String): Int
     private external fun nativeMapServerBuild(handle: Long, id: String, chapter: Int): String
     private external fun nativeMapServerDefault(handle: Long, id: String, map: String): String
     private external fun nativeMapServerTranscript(handle: Long, id: String): ByteArray?

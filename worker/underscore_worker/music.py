@@ -73,6 +73,33 @@ class Index:
                 self.emb = np.load(dir / "embeddings.npy")
                 self._score_voice()
 
+    # Text anchors that place a song on the scene axes. Scaled with the
+    # constants below, measured over a 1,500-song library, so energy 3 and
+    # valence 0 are its middle. Kept in step with crates/library Axes.
+    ANCHORS = {
+        "low": ["calm quiet slow gentle music", "soft ambient music, still and sparse", "slow tender solo piano"],
+        "high": ["fast loud energetic intense music", "driving percussion, urgent and powerful",
+                 "epic action music, big drums and brass"],
+        "dark": ["dark sad tense ominous music", "mournful melancholy strings, grief", "eerie dread, menacing low drones"],
+        "light": ["happy bright warm uplifting music", "playful cheerful lively music", "hopeful gentle sunny melody"],
+    }
+    ENERGY0, ENERGY1 = 0.065, 0.096
+    VALENCE0, VALENCE1 = 0.103, 0.150
+
+    def axes(self) -> dict:
+        """Every indexed song's place on the scene axes: id -> {energy 1..5,
+        valence -1..1, voice 0..1}, for maps that ask by coordinates."""
+        if not len(self.songs):
+            return {}
+        t = {k: self.clap.text(v).mean(0) for k, v in self.ANCHORS.items()}
+        t = {k: v / np.linalg.norm(v) for k, v in t.items()}
+        e = self.emb / (np.linalg.norm(self.emb, axis=1, keepdims=True) + 1e-9)
+        energy = np.clip(3 + (e @ t["high"] - e @ t["low"] - self.ENERGY0) / self.ENERGY1, 1, 5)
+        valence = np.clip((e @ t["light"] - e @ t["dark"] - self.VALENCE0) / (2 * self.VALENCE1), -1, 1)
+        voice = np.clip(self.voice * 5, 0, 1)
+        return {s["id"]: {"energy": round(float(a), 2), "valence": round(float(b), 2), "voice": round(float(c), 2)}
+                for s, a, b, c in zip(self.songs, energy, valence, voice)}
+
     def _score_voice(self) -> None:
         if not len(self.songs):
             return

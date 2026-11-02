@@ -30,7 +30,7 @@ use serde::{Deserialize, Serialize};
 use ureq::Agent;
 use ureq::http::Response;
 
-use crate::{Cache, Error, Item, ItemId, Library, Query, Role, normalize};
+use crate::{Axes, Cache, Error, Item, ItemId, Library, Query, Role, normalize};
 
 /// The API level this client speaks. Every server that speaks Subsonic accepts it.
 const API_VERSION: &str = "1.16.1";
@@ -233,6 +233,55 @@ impl Subsonic {
             .songs
             .write()
             .unwrap_or_else(std::sync::PoisonError::into_inner) = Catalog { items, titles };
+        n
+    }
+
+    /// Where the songs' coordinates are kept, beside the song list.
+    fn axes_path(&self, cache: &Cache) -> PathBuf {
+        cache.dir().join(format!("{}-axes.json", self.name))
+    }
+
+    /// Keep the songs' coordinates, a JSON object from song id to
+    /// `{energy, valence, voice}` as the map server publishes it, and put
+    /// them on the loaded songs. Returns how many songs got coordinates.
+    ///
+    /// # Errors
+    /// The JSON is not such an object, or could not be written.
+    pub fn save_axes(&self, cache: &Cache, json: &str) -> Result<usize, Error> {
+        let parsed: std::collections::HashMap<String, Axes> =
+            serde_json::from_str(json).map_err(|e| Error::Backend(format!("song axes: {e}")))?;
+        let path = self.axes_path(cache);
+        let tmp = path.with_extension("json.tmp");
+        std::fs::write(&tmp, json).map_err(|e| Error::Backend(format!("song axes: {e}")))?;
+        std::fs::rename(&tmp, &path).map_err(|e| Error::Backend(format!("song axes: {e}")))?;
+        Ok(self.apply_axes(&parsed))
+    }
+
+    /// Put the saved coordinates, if any, on the loaded songs. Returns how
+    /// many songs got them.
+    pub fn load_axes(&self, cache: &Cache) -> usize {
+        let Ok(bytes) = std::fs::read(self.axes_path(cache)) else {
+            return 0;
+        };
+        let Ok(parsed) = serde_json::from_slice::<std::collections::HashMap<String, Axes>>(&bytes)
+        else {
+            return 0;
+        };
+        self.apply_axes(&parsed)
+    }
+
+    fn apply_axes(&self, axes: &std::collections::HashMap<String, Axes>) -> usize {
+        let mut songs = self
+            .songs
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut n = 0;
+        for item in &mut songs.items {
+            if let Some(a) = axes.get(&item.id.0) {
+                item.axes = Some(*a);
+                n += 1;
+            }
+        }
         n
     }
 

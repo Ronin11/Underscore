@@ -523,7 +523,10 @@ class PlaybackService : Service() {
         val key = last.getString("key", null)
         mapLoading = true
         Thread({
-            // The music server wins when both are set.
+            // The music server wins when both are set. Its songs' coordinates
+            // come from the map server when it answers; a map that asks by
+            // energy and valence then resolves offline from the saved copy.
+            if (fromServer && mapServerUrl != null) engine.mapServerMusicAxes(cache.absolutePath)
             val problem = when {
                 fromServer -> engine.loadMapFromServer(toml, cache.absolutePath)
                 dir != null -> engine.loadMap(toml, dir.absolutePath, cache.absolutePath)

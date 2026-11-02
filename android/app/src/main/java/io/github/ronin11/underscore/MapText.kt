@@ -45,6 +45,9 @@ object MapText {
                     "${str(t, "title") ?: "?"} · ${str(t, "artist") ?: ""}"
                 }
                 c["vibe"] != null -> "Mood: " + c["vibe"]!!.trim('[', ']', ' ').replace("\"", "")
+                c["energy"] != null || c["valence"] != null ->
+                    listOfNotNull(c["energy"]?.let { "energy $it" }, c["valence"]?.let { "valence $it" })
+                        .joinToString(", ")
                 else -> "?"
             }
             val extras = listOfNotNull(

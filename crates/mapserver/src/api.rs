@@ -21,6 +21,8 @@
 //! PUT  /api/worker/books/{book}/voices      who says what
 //! GET  /api/worker/books/{book}/transcript  what the server keeps, so a worker never
 //! GET  /api/worker/books/{book}/voices      transcribes or listens to a book twice
+//! PUT  /api/worker/music/axes          every song's energy/valence/voice, from the worker
+//! GET  /api/music/axes                 the same, for the phone
 //! ```
 
 use serde::Deserialize;
@@ -140,6 +142,10 @@ pub fn handle(
                 Ok(()) => Reply::json(200, &serde_json::json!({ "ok": true })),
                 Err(e) => Reply::of(&e),
             },
+            ("PUT", ["music", "axes"]) => match store.set_music_axes(body) {
+                Ok(()) => Reply::json(200, &serde_json::json!({ "ok": true })),
+                Err(e) => Reply::of(&e),
+            },
             ("POST", ["jobs", job]) => match serde_json::from_str::<Progress>(body) {
                 Ok(news) => match store.progress(job, &news) {
                     Ok(job) => Reply::json(200, &serde_json::json!(job)),
@@ -186,6 +192,7 @@ pub fn handle(
         ("GET", ["books", book, "transcript"]) => {
             Reply::file(store.transcript(book), "application/json")
         }
+        ("GET", ["music", "axes"]) => Reply::file(store.music_axes(), "application/json"),
         ("GET", ["maps", id]) => Reply::file(store.map(id), "application/toml"),
         _ => Reply::error(404, "no such route"),
     }
@@ -225,6 +232,56 @@ mod tests {
         );
         let me = handle(&s, &Fake, "GET", "/api/me", Some("listener"), "");
         assert!(me.body.contains("nate"));
+    }
+
+    #[test]
+    fn the_worker_publishes_song_coordinates_and_listeners_read_them() {
+        let dir = std::env::temp_dir().join(format!("underscore-axes-{}", std::process::id()));
+        let s = Store::open(&dir).unwrap();
+        assert_eq!(
+            handle(&s, &Fake, "GET", "/api/music/axes", Some("listener"), "").body,
+            "{}"
+        );
+        let axes = r#"{"s1":{"energy":4.2,"valence":-0.5,"voice":0.0}}"#;
+        assert_eq!(
+            handle(
+                &s,
+                &Fake,
+                "PUT",
+                "/api/worker/music/axes",
+                Some("listener"),
+                axes
+            )
+            .status,
+            403
+        );
+        assert_eq!(
+            handle(
+                &s,
+                &Fake,
+                "PUT",
+                "/api/worker/music/axes",
+                Some("worker"),
+                axes
+            )
+            .status,
+            200
+        );
+        assert_eq!(
+            handle(
+                &s,
+                &Fake,
+                "PUT",
+                "/api/worker/music/axes",
+                Some("worker"),
+                "[1]"
+            )
+            .status,
+            400
+        );
+        let got = handle(&s, &Fake, "GET", "/api/music/axes", Some("listener"), "");
+        assert_eq!((got.status, got.body.as_str()), (200, axes));
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]

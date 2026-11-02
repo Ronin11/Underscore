@@ -72,6 +72,9 @@ class Worker:
         try:
             self.index.refresh(self.sub, self.cfg.music_only, log)
             self.indexed = time.time()
+            axes = self.index.axes()
+            self.maps.put_music_axes(axes)
+            log(f"published coordinates for {len(axes)} songs")
         except Exception as e:
             log(f"music index: {e}")
 

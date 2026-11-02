@@ -654,7 +654,25 @@ impl Bridge {
                 }
             }
         }
+        server.load_axes(&cache);
         Ok(MapPlayback::new(map, server, cache))
+    }
+
+    /// Fetch the songs' coordinates from the map server and keep them beside
+    /// the music server's cache, for cues that ask by energy and valence.
+    /// Returns how many of the loaded songs got coordinates. Network I/O.
+    ///
+    /// # Errors
+    /// The map server is out of reach, or its answer is not coordinates.
+    pub fn refresh_music_axes(
+        maps: &MapServer,
+        books: &Audiobookshelf,
+        server: &Subsonic,
+        cache_dir: &Path,
+    ) -> Result<usize, String> {
+        let json = maps.music_axes(books).map_err(|e| e.to_string())?;
+        let cache = Cache::open(cache_dir).map_err(|e| format!("cache: {e}"))?;
+        server.save_axes(&cache, &json).map_err(|e| e.to_string())
     }
 
     /// The cache files a map's music lives in, for the list of what a book

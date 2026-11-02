@@ -115,6 +115,7 @@ class MapsActivity : ServiceActivity() {
     /** The line under a cue's title: who, and how it was found. */
     private fun by(c: JSONObject): String? = when (c.optString("kind")) {
         "vibe" -> listOfNotNull(c.str("artist"), "picked for the mood").joinToString(" · ")
+        "axes" -> listOfNotNull(c.str("artist"), "picked by energy and valence").joinToString(" · ")
         "missing" -> listOfNotNull(c.str("artist"), "not in your music").joinToString(" · ")
         "silence" -> null
         else -> c.str("artist")

@@ -176,6 +176,33 @@ impl Store {
         self.dir.join("maps").join(format!("{id}.toml"))
     }
 
+    fn music_axes_path(&self) -> PathBuf {
+        self.dir.join("music_axes.json")
+    }
+
+    /// The songs' coordinates the worker published, as JSON; `{}` before it has.
+    pub fn music_axes(&self) -> Result<String, Error> {
+        match fs::read_to_string(self.music_axes_path()) {
+            Ok(text) => Ok(text),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok("{}".to_string()),
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    /// Keep the songs' coordinates: a JSON object from song id to
+    /// `{energy, valence, voice}`.
+    pub fn set_music_axes(&self, json: &str) -> Result<(), Error> {
+        let v: serde_json::Value =
+            serde_json::from_str(json).map_err(|e| Error::Invalid(format!("music axes: {e}")))?;
+        if !v.is_object() {
+            return Err(Error::Invalid("music axes: not an object".into()));
+        }
+        let tmp = self.dir.join("music_axes.json.tmp");
+        fs::write(&tmp, json)?;
+        fs::rename(&tmp, self.music_axes_path())?;
+        Ok(())
+    }
+
     fn transcript_path(&self, book: &str) -> PathBuf {
         self.dir.join("transcripts").join(format!("{book}.json"))
     }
