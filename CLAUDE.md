@@ -44,7 +44,8 @@ crates/bridge    Bridge (plain Rust over Player, no platform code), follow.rs
                  (the map worker thread), transcript.rs (the transcriber that
                  keeps a lead on playback and writes a transcript per book;
                  its speech engine is the `transcribe` feature, on by
-                 default). What every app shell calls.
+                 default), scenes.rs (that transcript rated by the scene
+                 model and written as a map). What every app shell calls.
 crates/android   jni.rs only: JNI exports, each a thin call into the bridge.
 crates/cli       `underscore` binary. `scan` and `map check`; no playback yet.
 crates/mapserver `underscore-maps`: maps for an Audiobookshelf server's books,

@@ -376,6 +376,24 @@ class MapsActivity : ServiceActivity() {
         list.addView(mapsList)
 
         list.addView(divider())
+        list.addView(heading("On this phone"))
+        list.addView(
+            row(
+                "Make a map from what this phone heard",
+                "Rates each minute of the transcript for energy and mood and picks music by those " +
+                    "coordinates. Needs Transcribe on this phone, or a transcript from the server.",
+            ) {
+                val s = service ?: return@row
+                toast("Listening back…")
+                s.mapFromHere { problem ->
+                    toast(problem ?: "Following the map this phone made")
+                    mapsShown = null
+                    refresh()
+                }
+            }.view,
+        )
+
+        list.addView(divider())
         list.addView(heading("From a file"))
         list.addView(
             row("Load a map file…", "A map in TOML, played with the music server or the music folder.") {

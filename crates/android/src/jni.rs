@@ -1265,6 +1265,43 @@ pub extern "system" fn Java_io_github_ronin11_underscore_Engine_nativeMapServerB
     answer(maps.book(&books, &id).map_err(|e| e.to_string()))
 }
 
+/// A map from what this phone heard of book `key`: each minute of its
+/// transcript under `dir` rated by the scene model (fetched into `dir`
+/// the first time, about 44 MB), cues asking for music by energy and
+/// valence. JSON `{"map", "cues", "passages", "coveredMs", "complete"}`
+/// or `{"error": ...}`. Slow: a background thread.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_io_github_ronin11_underscore_Engine_nativeMapFromTranscript(
+    mut env: JNIEnv,
+    _this: JObject,
+    _handle: jlong,
+    dir: JString,
+    key: JString,
+    length_ms: jlong,
+) -> jstring {
+    let (dir, key) = (string(&mut env, &dir), string(&mut env, &key));
+    let answer = |r: Result<String, String>| match r {
+        Ok(text) => jstr(&env, &text),
+        Err(e) => jstr(&env, &serde_json::json!({ "error": e }).to_string()),
+    };
+    let (Some(dir), Some(key)) = (dir, key) else {
+        return answer(Err(
+            "the transcript folder and the book's key are both needed".into(),
+        ));
+    };
+    let stop = std::sync::atomic::AtomicBool::new(false);
+    answer(
+        underscore_bridge::scenes::build(
+            &PathBuf::from(dir),
+            &key,
+            Duration::from_millis(u64::try_from(length_ms).unwrap_or(0)),
+            4,
+            &stop,
+        )
+        .map(|b| b.json()),
+    )
+}
+
 /// Fetch the songs' coordinates from the map server and keep them beside
 /// the music server's cache. Returns how many songs got them, or -1 with no
 /// map or music server, -2 when the fetch failed. Network I/O.

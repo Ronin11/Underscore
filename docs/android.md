@@ -259,6 +259,20 @@ segments at quote marks and tags each span with a voice label and pitch,
 which can tell dialogue from narration where the text alone cannot
 (see the voices file in `docs/map-server.md`).
 
+The transcript can also make a map with no server at all. The Music
+screen's "Make a map from what this phone heard" rates each minute of
+the transcript with the scene model (a 7.7M-parameter encoder from the
+zwhisper repository, fetched once into the same `whisper` folder, 44 MB)
+on three axes: whether music belongs there, energy from 1 to 5, and
+colour from dark to light. `crates/bridge/src/scenes.rs` turns the
+ratings into cues that ask for music by `energy` and `valence`, joining
+minutes that agree and absorbing cues under two minutes, and the
+conductor picks the nearest song the music server or folder has
+coordinates for. Ratings are kept beside the transcript, so making the
+map again after the transcriber has gone further rates only the new
+minutes. The map is named "Heard on this phone" and saved for the book
+like any other.
+
 ## Falling asleep
 
 The Sleep button offers Auto, Manual, and Off. Manual holds the timers.

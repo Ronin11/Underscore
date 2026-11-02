@@ -41,6 +41,7 @@ const CROSSING_WINDOW: Duration = Duration::from_secs(2);
 const CLEAR_FADE: Duration = Duration::from_secs(2);
 
 pub mod follow;
+pub mod scenes;
 pub mod transcript;
 
 /// The cache files a map's music lives in. See [`Bridge::map_files`].

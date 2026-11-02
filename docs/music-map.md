@@ -161,6 +161,11 @@ makes a map a chapter at a time, from where the listener is, and the
 phone plays each chapter as it arrives. `docs/map-server.md` has the
 details.
 
+A phone can also make a map alone, from the transcript its own
+transcriber writes: a small scene model rates each minute on energy,
+valence and whether music belongs at all, and the cues ask for music by
+those coordinates (`crates/bridge/src/scenes.rs`, `docs/android.md`).
+
 The two stages above are kept apart there too. The model is asked for
 scenes and moods, never to browse the catalog; a plain matcher picks the
 music. A hand-written map works with no model at all, and the map server

@@ -545,7 +545,7 @@ pub fn download_model(
     dir: &Path,
     name: &str,
     stop: &AtomicBool,
-    mut progress: impl FnMut(u64, Option<u64>),
+    progress: impl FnMut(u64, Option<u64>),
 ) -> Result<PathBuf, Error> {
     let path = model_path(dir, name);
     if path.is_file() {
@@ -553,7 +553,73 @@ pub fn download_model(
     }
     fs::create_dir_all(dir)?;
     let url = format!("https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-{name}.bin");
-    let mut resp = ureq::get(&url)
+    fetch(&url, &path, stop, progress)?;
+    Ok(path)
+}
+
+/// The scene model's release: the directory name under `dir` and where its
+/// files come from. A new model is a new name, so phones keep working on
+/// the old one until they fetch the new.
+pub const SCENE_MODEL: &str = "scene-v1";
+const SCENE_MODEL_URL: &str = "https://github.com/Ronin11/zwhisper/releases/download/scene-v1";
+/// The files an indecis model directory holds.
+pub const SCENE_MODEL_FILES: [&str; 4] = [
+    "config.json",
+    "indecis.json",
+    "model.safetensors",
+    "tokenizer.json",
+];
+
+/// Where the scene model lives under `dir`.
+#[must_use]
+pub fn scene_model_path(dir: &Path) -> PathBuf {
+    dir.join(SCENE_MODEL)
+}
+
+/// Whether every file of the scene model is in place under `dir`.
+#[must_use]
+pub fn scene_model_ready(dir: &Path) -> bool {
+    let d = scene_model_path(dir);
+    SCENE_MODEL_FILES.iter().all(|f| d.join(f).is_file())
+}
+
+/// Download the scene model into `dir`, unless it is already there. Four
+/// files, about 44 MB in all; `progress` hears bytes so far and the total
+/// of the file being fetched. Returns the model directory.
+///
+/// # Errors
+/// A download failed or was stopped, or a file could not be written.
+pub fn download_scene_model(
+    dir: &Path,
+    stop: &AtomicBool,
+    mut progress: impl FnMut(u64, Option<u64>),
+) -> Result<PathBuf, Error> {
+    let d = scene_model_path(dir);
+    fs::create_dir_all(&d)?;
+    for name in SCENE_MODEL_FILES {
+        let path = d.join(name);
+        if path.is_file() {
+            continue;
+        }
+        fetch(
+            &format!("{SCENE_MODEL_URL}/{name}"),
+            &path,
+            stop,
+            &mut progress,
+        )?;
+    }
+    Ok(d)
+}
+
+/// Fetch `url` into `path` through a `.part` file beside it, so a cut-off
+/// download never looks like a model.
+fn fetch(
+    url: &str,
+    path: &Path,
+    stop: &AtomicBool,
+    mut progress: impl FnMut(u64, Option<u64>),
+) -> Result<(), Error> {
+    let mut resp = ureq::get(url)
         .call()
         .map_err(|e| Error::Io(io::Error::other(format!("{url}: {e}"))))?;
     let total = resp
@@ -588,13 +654,29 @@ pub fn download_model(
             "the model download was cut short",
         )));
     }
-    fs::rename(&part, &path)?;
-    Ok(path)
+    fs::rename(&part, path)?;
+    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_scene_model_is_a_directory_of_four_files() {
+        let dir = std::env::temp_dir().join(format!("underscore-scene-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(!scene_model_ready(&dir));
+        let d = scene_model_path(&dir);
+        std::fs::create_dir_all(&d).unwrap();
+        for f in &SCENE_MODEL_FILES[..3] {
+            std::fs::write(d.join(f), b"x").unwrap();
+        }
+        assert!(!scene_model_ready(&dir), "three files are not a model");
+        std::fs::write(d.join(SCENE_MODEL_FILES[3]), b"x").unwrap();
+        assert!(scene_model_ready(&dir));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn models_are_named_where_the_project_puts_them() {

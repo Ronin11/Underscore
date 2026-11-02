@@ -21,7 +21,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
-use speech::{Model, SAMPLE_RATE, Segment};
+pub use speech::Segment;
+use speech::{Model, SAMPLE_RATE};
 use underscore_core::Source;
 use underscore_decode::FileSource;
 

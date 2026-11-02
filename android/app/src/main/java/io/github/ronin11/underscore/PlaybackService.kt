@@ -32,6 +32,7 @@ import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import androidx.media.app.NotificationCompat.MediaStyle
 import java.io.File
+import org.json.JSONObject
 import kotlin.math.abs
 
 /**
@@ -1134,6 +1135,45 @@ class PlaybackService : Service() {
         }
     }
 
+    /** The open book's transcript key, as the transcriber names it, or null. */
+    private val transcriptKey: String?
+        get() = when (last.getString("kind", null)) {
+            "server" -> last.getString("id", null)?.let { "abs:$it" }
+            "file" -> last.getString("uri", null)?.let { "file:$it" }
+            else -> null
+        }
+
+    /**
+     * Make a map from what this phone heard of the open book and follow
+     * it: each minute of the transcript rated for energy and mood, the
+     * music picked by those coordinates from the music server or folder.
+     * Slow (the scene model is fetched once, 44 MB; then about a second a
+     * chapter): its own thread, [onDone] on the main thread with null or
+     * what went wrong.
+     */
+    fun mapFromHere(onDone: (String?) -> Unit) {
+        val key = transcriptKey
+        if (key == null) {
+            onDone("Open a book first")
+            return
+        }
+        if (!engine.hasMusicServer && musicDir == null) {
+            onDone("Sign in to the music server or set the music folder in Settings first")
+            return
+        }
+        val dir = File(filesDir, "whisper").absolutePath
+        val length = engine.durationMs
+        Thread({
+            val answer = JSONObject(engine.mapFromTranscript(dir, key, length))
+            val error = answer.optString("error").ifEmpty { null }
+            val toml = answer.optString("map").ifEmpty { null }
+            mainHandler.post {
+                if (error != null || toml == null) onDone(error ?: "no map")
+                else loadMap(toml, HEARD_MAP) { onDone(it) }
+            }
+        }, "underscore-map-hear").start()
+    }
+
     /** Where in the open book the listener probably fell asleep, or -1. */
     val dozedAtMs: Long get() = last.getLong("dozedAtMs", -1)
 
@@ -1977,6 +2017,8 @@ class PlaybackService : Service() {
         private const val SAVE_EVERY_MS = 15_000L
         /** Kept beside a book on the server: its music map, and a finished transcript. */
         const val SERVER_MAP = "underscore.toml"
+        /** The name of a map this phone made from its own transcript. */
+        const val HEARD_MAP = "Heard on this phone"
         const val SERVER_TRANSCRIPT = "underscore.transcript.json"
         /** The map server's answer about book [id]: its maps, default, and job. */
         fun parseBookMaps(id: String, v: org.json.JSONObject): BookMaps {

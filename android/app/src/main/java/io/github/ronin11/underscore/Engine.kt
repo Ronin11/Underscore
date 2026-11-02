@@ -122,6 +122,12 @@ class Engine(sampleRate: Int, val channels: Int) : AutoCloseable {
     fun serverCompanion(id: String, name: String): ByteArray? = nativeServerCompanion(h(), id, name)
     /** Take [data] as book [key]'s transcript under [dir]. Null, or why not. */
     fun transcribeImport(dir: String, key: String, data: ByteArray): String? = nativeTranscribeImport(h(), dir, key, data)
+    /**
+     * A map from what this phone heard of book [key]: JSON with `map` (TOML),
+     * `cues`, `passages`, `coveredMs` and `complete`, or `error`. Fetches the
+     * scene model into [dir] the first time (44 MB). Slow: not on the main thread.
+     */
+    fun mapFromTranscript(dir: String, key: String, lengthMs: Long): String = nativeMapFromTranscript(h(), dir, key, lengthMs)
 
     /** Use the map server at [url], or none for an empty one. No I/O. */
     fun mapServerSet(url: String) = nativeMapServerSet(h(), url)
@@ -236,6 +242,7 @@ class Engine(sampleRate: Int, val channels: Int) : AutoCloseable {
     private external fun nativeServerSync(handle: Long): Boolean
     private external fun nativeServerCompanion(handle: Long, id: String, name: String): ByteArray?
     private external fun nativeTranscribeImport(handle: Long, dir: String, key: String, data: ByteArray): String?
+    private external fun nativeMapFromTranscript(handle: Long, dir: String, key: String, lengthMs: Long): String
     private external fun nativeStoragePlan(handle: Long, ask: String): String
     private external fun nativeMapServerSet(handle: Long, url: String)
     private external fun nativeMapServerCheck(handle: Long): String?
