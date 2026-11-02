@@ -144,14 +144,43 @@ mod ffi {
             voices: bool,
             split_quotes: bool,
             condition_on_previous: bool,
+            learn_names: bool,
             stop: *const bool,
             emit: Emit,
             user: *mut c_void,
             stats: *mut Stats,
         ) -> c_int;
         pub fn zw_reset_voices(h: *mut Handle);
+        pub fn zw_set_prompt(h: *mut Handle, text: *const u8, len: usize) -> c_int;
+        pub fn zw_set_hotwords(h: *mut Handle, list: *const u8, len: usize) -> c_int;
         pub fn zw_n_voices(h: *mut Handle) -> u32;
         pub fn zw_version() -> c_int;
+
+        pub fn zw_scene_open(dir: *const c_char, threads: c_int) -> *mut SceneHandle;
+        pub fn zw_scene_close(h: *mut SceneHandle);
+        pub fn zw_scene_rate(
+            h: *mut SceneHandle,
+            text: *const u8,
+            len: usize,
+            out: *mut SceneAxes,
+        ) -> c_int;
+    }
+
+    #[repr(C)]
+    pub struct SceneHandle {
+        _private: [u8; 0],
+    }
+
+    /// Mirrors `zw_scene_axes` in the header.
+    #[repr(C)]
+    #[derive(Default, Clone, Copy)]
+    pub struct SceneAxes {
+        pub silence: f32,
+        pub energy: [f32; 5],
+        pub energy_mean: f32,
+        pub valence: [f32; 3],
+        pub valence_mean: f32,
+        pub n_tokens: u32,
     }
 }
 
@@ -170,6 +199,164 @@ unsafe extern "C" fn emit(user: *mut c_void, seg: *const ffi::Segment) {
         pitch_hz: seg.pitch_hz,
         voice_dist: seg.voice_dist,
     });
+}
+
+/// The zwhisper C ABI version this crate was written against.
+pub const ABI: c_int = 3;
+
+/// What the scene model says about a passage of narration: whether music belongs
+/// under it at all, how much energy it has, and its emotional colour.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct SceneAxes {
+    /// Probability that no music belongs here (front matter, credits, notes).
+    pub silence: f32,
+    /// Probabilities of energy levels 1 to 5.
+    pub energy: [f32; 5],
+    /// Expected energy, 1 to 5.
+    pub energy_mean: f32,
+    /// Probabilities of dark, neutral, light.
+    pub valence: [f32; 3],
+    /// Expected valence, -1 (dark) to 1 (light).
+    pub valence_mean: f32,
+    /// Tokens the model read, after truncation to its window.
+    pub n_tokens: u32,
+}
+
+/// About a minute of transcript, with where it sits in the book.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Passage {
+    pub start: Duration,
+    pub end: Duration,
+    pub text: String,
+}
+
+/// Group consecutive segments into passages of at least `at_least` each, cut only
+/// at segment boundaries. A short tail joins the passage before it.
+#[must_use]
+pub fn passages(segments: &[Segment], at_least: Duration) -> Vec<Passage> {
+    let mut out: Vec<Passage> = Vec::new();
+    let mut cur: Option<Passage> = None;
+    for s in segments {
+        let text = s.text.trim();
+        if text.is_empty() {
+            continue;
+        }
+        match cur.as_mut() {
+            None => {
+                cur = Some(Passage {
+                    start: s.start,
+                    end: s.end,
+                    text: text.to_string(),
+                });
+            }
+            Some(p) => {
+                p.text.push(' ');
+                p.text.push_str(text);
+                p.end = s.end;
+            }
+        }
+        if let Some(p) = &cur
+            && p.end.saturating_sub(p.start) >= at_least
+        {
+            out.extend(cur.take());
+        }
+    }
+    if let Some(tail) = cur {
+        match out.last_mut() {
+            Some(prev) if tail.end.saturating_sub(tail.start) < at_least / 2 => {
+                prev.text.push(' ');
+                prev.text.push_str(&tail.text);
+                prev.end = tail.end;
+            }
+            _ => out.push(tail),
+        }
+    }
+    out
+}
+
+/// The scene model: an indecis model directory (config.json, indecis.json,
+/// model.safetensors, tokenizer.json) rating passages on three axes.
+pub struct SceneRater {
+    h: NonNull<ffi::SceneHandle>,
+}
+
+// Used from one thread at a time; its worker threads are internal.
+unsafe impl Send for SceneRater {}
+
+impl fmt::Debug for SceneRater {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("SceneRater").finish_non_exhaustive()
+    }
+}
+
+impl Drop for SceneRater {
+    fn drop(&mut self) {
+        // SAFETY: the handle came from zw_scene_open and is closed exactly once.
+        unsafe { ffi::zw_scene_close(self.h.as_ptr()) }
+    }
+}
+
+impl SceneRater {
+    /// Load the model directory at `dir`, to run on `threads` CPU threads.
+    ///
+    /// # Errors
+    /// The directory is missing one of the four files or they do not parse.
+    pub fn open(dir: &Path, threads: usize) -> Result<Self, Error> {
+        let path = dir
+            .to_str()
+            .ok_or_else(|| Error::Engine("model path is not text".into()))?;
+        let c = CString::new(path).map_err(|_| Error::Engine("model path has a NUL".into()))?;
+        // SAFETY: no arguments, no state.
+        let version = unsafe { ffi::zw_version() };
+        if version != ABI {
+            return Err(Error::Engine(format!(
+                "zwhisper ABI {version}, expected {ABI}"
+            )));
+        }
+        // SAFETY: c is a valid NUL-terminated path.
+        let h =
+            unsafe { ffi::zw_scene_open(c.as_ptr(), c_int::try_from(threads.max(1)).unwrap_or(1)) };
+        let h = NonNull::new(h).ok_or_else(|| {
+            Error::Engine(format!("could not open scene model {}", dir.display()))
+        })?;
+        Ok(Self { h })
+    }
+
+    /// Rate one passage, about a minute of narration.
+    ///
+    /// # Errors
+    /// The model failed, or lacks one of the three axes.
+    pub fn rate(&self, text: &str) -> Result<SceneAxes, Error> {
+        let mut out = ffi::SceneAxes::default();
+        // SAFETY: the handle is live; text is a valid slice; out is a valid struct.
+        let rc =
+            unsafe { ffi::zw_scene_rate(self.h.as_ptr(), text.as_ptr(), text.len(), &raw mut out) };
+        match rc {
+            0 => Ok(SceneAxes {
+                silence: out.silence,
+                energy: out.energy,
+                energy_mean: out.energy_mean,
+                valence: out.valence,
+                valence_mean: out.valence_mean,
+                n_tokens: out.n_tokens,
+            }),
+            3 => Err(Error::Engine(
+                "scene model lacks silence, energy or valence".into(),
+            )),
+            _ => Err(Error::Engine("scene model failed".into())),
+        }
+    }
+
+    /// Rate a transcript minute by minute.
+    ///
+    /// # Errors
+    /// As [`Self::rate`].
+    pub fn rate_segments(&self, segments: &[Segment]) -> Result<Vec<(Passage, SceneAxes)>, Error> {
+        passages(segments, Duration::from_secs(60))
+            .into_iter()
+            .map(|p| self.rate(&p.text).map(|a| (p, a)))
+            .collect()
+    }
 }
 
 /// A loaded model.
@@ -210,8 +397,10 @@ impl Transcriber {
         let threads = threads.max(1);
         // SAFETY: no arguments, no state.
         let version = unsafe { ffi::zw_version() };
-        if version != 1 {
-            return Err(Error::Engine(format!("zwhisper ABI {version}, expected 1")));
+        if version != ABI {
+            return Err(Error::Engine(format!(
+                "zwhisper ABI {version}, expected {ABI}"
+            )));
         }
         // SAFETY: c is a valid NUL-terminated path.
         let h = unsafe { ffi::zw_open(c.as_ptr(), c_int::try_from(threads).unwrap_or(4)) };
@@ -251,6 +440,46 @@ impl Transcriber {
         self.run(audio, offset, stop, true)
     }
 
+    /// Names and odd words spelt the way they should come out, written as a line or two
+    /// of the book's own prose, quotes included: the decoder reads it before every
+    /// window and copies its spelling and style. Empty clears it.
+    ///
+    /// # Errors
+    /// The engine could not tokenize the text.
+    pub fn set_prompt(&self, text: &str) -> Result<(), Error> {
+        // SAFETY: valid handle; the bytes outlive the call.
+        let rc = unsafe { ffi::zw_set_prompt(self.h.as_ptr(), text.as_ptr(), text.len()) };
+        if rc == 0 {
+            Ok(())
+        } else {
+            Err(Error::Engine("could not set the prompt".into()))
+        }
+    }
+
+    /// Words and phrases to favour while decoding (character names, places, invented
+    /// words), replacing any set before. The engine also picks up names on its own.
+    ///
+    /// # Errors
+    /// The engine could not tokenize a word.
+    pub fn set_hotwords<I, S>(&self, words: I) -> Result<(), Error>
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
+        let list = words
+            .into_iter()
+            .map(|w| w.as_ref().replace(',', " "))
+            .collect::<Vec<_>>()
+            .join(",");
+        // SAFETY: valid handle; the bytes outlive the call.
+        let rc = unsafe { ffi::zw_set_hotwords(self.h.as_ptr(), list.as_ptr(), list.len()) };
+        if rc == 0 {
+            Ok(())
+        } else {
+            Err(Error::Engine("could not set hotwords".into()))
+        }
+    }
+
     /// Forget the voices seen so far (a new book).
     pub fn reset_voices(&self) {
         // SAFETY: valid handle.
@@ -284,6 +513,7 @@ impl Transcriber {
                 offset_ms,
                 voices,
                 voices,
+                true,
                 true,
                 stop.as_ptr().cast_const(),
                 emit,
@@ -381,9 +611,37 @@ mod tests {
     }
 
     #[test]
+    fn passages_cut_at_segment_boundaries_after_a_minute() {
+        let seg = |a: u64, b: u64, t: &str| Segment {
+            start: Duration::from_secs(a),
+            end: Duration::from_secs(b),
+            text: t.to_string(),
+        };
+        let segs = [
+            seg(0, 40, "a"),
+            seg(40, 70, "b"),
+            seg(70, 100, "c"),
+            seg(100, 135, "d"),
+            seg(135, 140, "e"),
+        ];
+        let p = passages(&segs, Duration::from_secs(60));
+        assert_eq!(p.len(), 2);
+        assert_eq!(p[0].text, "a b");
+        assert_eq!(
+            (p[0].start, p[0].end),
+            (Duration::from_secs(0), Duration::from_secs(70))
+        );
+        assert_eq!(
+            p[1].text, "c d e",
+            "a short tail joins the passage before it"
+        );
+        assert_eq!(p[1].end, Duration::from_secs(140));
+    }
+
+    #[test]
     fn the_engine_links() {
         // SAFETY: no arguments, no state.
-        assert_eq!(unsafe { ffi::zw_version() }, 1);
+        assert_eq!(unsafe { ffi::zw_version() }, ABI);
     }
 
     /// Runs only when a model is around: ZWHISPER_MODEL=/path/to/ggml-base.en.bin.
@@ -393,6 +651,8 @@ mod tests {
             return;
         };
         let t = Transcriber::open(Path::new(&model), 4).unwrap();
+        t.set_prompt("\"Hello,\" said Carl.").unwrap();
+        t.set_hotwords(["Carl", "Princess Donut"]).unwrap();
         let audio = vec![0.0f32; SAMPLE_RATE as usize * 3];
         let stop = AtomicBool::new(false);
         let segs = t.transcribe(&audio, Duration::ZERO, &stop).unwrap();
