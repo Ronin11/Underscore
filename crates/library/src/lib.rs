@@ -76,6 +76,33 @@ pub struct Chapter {
     pub start: Duration,
 }
 
+/// Where a song sits on the axes scenes are rated on, so a cue asking for
+/// "energy 4, dark" can be matched without words. See `docs/music-map.md`.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct Axes {
+    /// 1 (still) to 5 (peak).
+    pub energy: f32,
+    /// -1 (dark) to 1 (light).
+    pub valence: f32,
+    /// How much singing there is, 0 to 1. Singing under narration is avoided.
+    #[serde(default)]
+    pub voice: f32,
+}
+
+// Coordinates are finite by construction; equality is as a value.
+impl Eq for Axes {}
+
+impl Axes {
+    /// Distance to a cue's wish, with the energy range scaled to match the
+    /// valence range and singing pushed away. Smaller is better.
+    #[must_use]
+    pub fn distance(&self, energy: f32, valence: f32) -> f32 {
+        let de = (self.energy - energy) / 2.0;
+        let dv = self.valence - valence;
+        de * de + dv * dv + 0.5 * self.voice * self.voice
+    }
+}
+
 /// One thing a library holds.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Item {
@@ -103,6 +130,9 @@ pub struct Item {
     /// File extension or format name, as a decoding hint.
     #[serde(default)]
     pub format: Option<String>,
+    /// Where it sits on the scene axes, when the library knows.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub axes: Option<Axes>,
 }
 
 impl Item {
@@ -397,6 +427,7 @@ mod tests {
             tags: tags.iter().map(|t| (*t).to_string()).collect(),
             chapters: Vec::new(),
             format: None,
+            axes: None,
         }
     }
 

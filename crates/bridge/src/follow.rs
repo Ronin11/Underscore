@@ -299,13 +299,15 @@ impl MapPlayback {
 
     fn describe(&self, c: &Conductor, n: usize) -> String {
         let what = match &c.resolutions()[n] {
-            Resolution::Track(id) | Resolution::Vibe(id) => self.library.item(id).map_or_else(
-                |_| id.to_string(),
-                |it| {
-                    let by = it.artist.map(|a| format!(" by {a}")).unwrap_or_default();
-                    format!("{}{by}", it.title)
-                },
-            ),
+            Resolution::Track(id) | Resolution::Vibe(id) | Resolution::Axes(id) => {
+                self.library.item(id).map_or_else(
+                    |_| id.to_string(),
+                    |it| {
+                        let by = it.artist.map(|a| format!(" by {a}")).unwrap_or_default();
+                        format!("{}{by}", it.title)
+                    },
+                )
+            }
             Resolution::Silence => "silence".to_string(),
             Resolution::Missing => "nothing found".to_string(),
         };

@@ -91,12 +91,13 @@ Per cue:
 | `why`      | A note for whoever reads the map later.                         |
 | `track`    | The track to play: `artist`, `title`, optional `album` and `mbid`. |
 | `vibe`     | Mood tags. Used to pick a track when `track` is absent or not in the library. |
-| `silence`  | Play nothing. Excludes `track` and `vibe`.                      |
+| `energy`, `valence` | Coordinates: energy 1 (still) to 5 (peak), valence -1 (dark) to 1 (light). Used to pick the nearest track when `track` is absent or not in the library and the library knows where its songs sit. |
+| `silence`  | Play nothing. Excludes `track`, `vibe`, `energy` and `valence`. |
 | `region`   | `start`, optional `end`, `repeat`, optional `crossfade`. Absent means the whole track, once. |
 | `level_db` | Offset from the listener's music level. Overrides the default.  |
 | `fade_in`, `fade_out` | Override the defaults.                               |
 
-A cue must name a track, a vibe, or silence. The parser rejects a map that
+A cue must name a track, a vibe, coordinates, or silence. The parser rejects a map that
 contradicts itself and says which cue. Order against a recording is
 checked when the map is resolved, since it depends on the chapter times.
 

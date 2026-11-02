@@ -12,7 +12,7 @@ use underscore_core::{Gain, LayerId, Player, Region, RegionConfig, Silence, Sour
 use underscore_decode::FileSource;
 use underscore_map::{Change, Map, Schedule, Span, Timeline};
 
-use crate::{Cache, Error, ItemId, Library, Query};
+use crate::{Cache, Error, Item, ItemId, Library, Query, Role};
 
 /// How a cue's music was found, or not.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -21,6 +21,9 @@ pub enum Resolution {
     Track(ItemId),
     /// The named track is not, or none was named; this matched the vibe.
     Vibe(ItemId),
+    /// Neither a track nor a vibe matched; this is the nearest song to the
+    /// cue's energy and valence.
+    Axes(ItemId),
     /// The cue asks for silence.
     Silence,
     /// Nothing matched. Plays as silence.
@@ -32,7 +35,7 @@ impl Resolution {
     #[must_use]
     pub fn item(&self) -> Option<&ItemId> {
         match self {
-            Self::Track(id) | Self::Vibe(id) => Some(id),
+            Self::Track(id) | Self::Vibe(id) | Self::Axes(id) => Some(id),
             Self::Silence | Self::Missing => None,
         }
     }
@@ -79,8 +82,9 @@ impl Conductor {
     pub fn new(map: Map, timeline: &Timeline, music: &dyn Library) -> Result<Self, Error> {
         let schedule = Schedule::new(&map, timeline)?;
         let mut resolved = Vec::with_capacity(map.cues.len());
+        let mut pool = None;
         for cue in &map.cues {
-            resolved.push(resolve(cue, music)?);
+            resolved.push(resolve(cue, music, &mut pool)?);
         }
         Ok(Self {
             map,
@@ -164,8 +168,9 @@ impl Conductor {
 /// The library failed.
 pub fn items(map: &Map, music: &dyn Library) -> Result<Vec<ItemId>, Error> {
     let mut out: Vec<ItemId> = Vec::new();
+    let mut pool = None;
     for cue in &map.cues {
-        if let Some(id) = resolve(cue, music)?.item()
+        if let Some(id) = resolve(cue, music, &mut pool)?.item()
             && !out.contains(id)
         {
             out.push(id.clone());
@@ -174,7 +179,13 @@ pub fn items(map: &Map, music: &dyn Library) -> Result<Vec<ItemId>, Error> {
     Ok(out)
 }
 
-fn resolve(cue: &underscore_map::Cue, music: &dyn Library) -> Result<Resolution, Error> {
+/// `pool` caches the library's songs across cues, loaded the first time a
+/// cue asks for music by its coordinates.
+fn resolve(
+    cue: &underscore_map::Cue,
+    music: &dyn Library,
+    pool: &mut Option<Vec<Item>>,
+) -> Result<Resolution, Error> {
     if cue.silence {
         return Ok(Resolution::Silence);
     }
@@ -188,6 +199,22 @@ fn resolve(cue: &underscore_map::Cue, music: &dyn Library) -> Result<Resolution,
         && let Some(hit) = music.search(&Query::vibe(&cue.vibe))?.into_iter().next()
     {
         return Ok(Resolution::Vibe(hit.id));
+    }
+    if cue.has_axes() {
+        if pool.is_none() {
+            *pool = Some(music.items(Role::Music)?);
+        }
+        let energy = cue.energy.unwrap_or(2.5);
+        let valence = cue.valence.unwrap_or(0.0);
+        let nearest = pool
+            .as_deref()
+            .unwrap_or_default()
+            .iter()
+            .filter_map(|i| i.axes.map(|a| (a.distance(energy, valence), &i.id)))
+            .min_by(|a, b| a.0.total_cmp(&b.0));
+        if let Some((_, id)) = nearest {
+            return Ok(Resolution::Axes(id.clone()));
+        }
     }
     Ok(Resolution::Missing)
 }
@@ -257,7 +284,51 @@ mod tests {
             tags: tags.iter().map(|t| (*t).to_string()).collect(),
             chapters: Vec::new(),
             format: None,
+            axes: None,
         }
+    }
+
+    #[test]
+    fn coordinates_pick_the_nearest_song_that_is_not_sung() {
+        use crate::Axes;
+        let mut calm = item("Still", "A", &[]);
+        calm.axes = Some(Axes {
+            energy: 1.5,
+            valence: 0.2,
+            voice: 0.0,
+        });
+        let mut fight = item("Charge", "B", &[]);
+        fight.axes = Some(Axes {
+            energy: 4.5,
+            valence: -0.6,
+            voice: 0.0,
+        });
+        let mut sung = item("Ballad", "C", &[]);
+        sung.axes = Some(Axes {
+            energy: 4.4,
+            valence: -0.6,
+            voice: 1.0,
+        });
+        let lib =
+            LocalLibrary::from_items("test", vec![calm, fight, sung, item("Untagged", "D", &[])]);
+        let map = Map::parse(
+            "version = 1\n[[cue]]\nat = \"0:00\"\nenergy = 4.6\nvalence = -0.5\n[[cue]]\nat = \"3:00\"\nvalence = 0.3\n",
+        )
+        .unwrap();
+        let mut pool = None;
+        assert_eq!(
+            resolve(&map.cues[0], &lib, &mut pool).unwrap(),
+            Resolution::Axes(ItemId("B/Charge".into()))
+        );
+        assert_eq!(
+            resolve(&map.cues[1], &lib, &mut pool).unwrap(),
+            Resolution::Axes(ItemId("A/Still".into()))
+        );
+        assert_eq!(
+            pool.as_ref().map(Vec::len),
+            Some(4),
+            "the song list is loaded once"
+        );
     }
 
     fn library() -> LocalLibrary {

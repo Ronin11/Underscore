@@ -160,6 +160,7 @@ impl LocalLibrary {
             tags,
             chapters,
             format: Some(ext),
+            axes: None,
         })
     }
 

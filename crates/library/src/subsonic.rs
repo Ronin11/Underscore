@@ -498,6 +498,7 @@ impl Song {
                 .suffix
                 .map(|s| s.to_ascii_lowercase())
                 .filter(|s| !s.is_empty()),
+            axes: None,
         }
     }
 }

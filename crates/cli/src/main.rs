@@ -151,40 +151,8 @@ fn map_check(args: &[&str]) -> Result<(), String> {
             Some(ch) => format!("ch {ch} {}", cue.at.offset),
             None => cue.at.offset.to_string(),
         };
-        let describe = |id: &underscore_library::ItemId| {
-            lib.item(id).map_or_else(
-                |_| id.to_string(),
-                |it| {
-                    format!(
-                        "{}{}",
-                        it.title,
-                        it.artist.map(|a| format!(" by {a}")).unwrap_or_default()
-                    )
-                },
-            )
-        };
-        let what = match res {
-            Resolution::Track(id) => {
-                found += 1;
-                format!("track    {}", describe(id))
-            }
-            Resolution::Vibe(id) => {
-                found += 1;
-                format!("vibe     {}  (for {})", describe(id), cue.vibe.join(", "))
-            }
-            Resolution::Silence => "silence".to_string(),
-            Resolution::Missing => {
-                let mut wanted: Vec<String> = cue
-                    .track
-                    .iter()
-                    .map(|t| format!("{} by {}", t.title, t.artist))
-                    .collect();
-                if !cue.vibe.is_empty() {
-                    wanted.push(format!("anything {}", cue.vibe.join(", ")));
-                }
-                format!("MISSING  wanted {}", wanted.join(", or "))
-            }
-        };
+        let (what, hit) = describe_resolution(res, cue, &*lib);
+        found += usize::from(hit);
         println!("cue {:>3}  {at:>14}  {what}", i + 1);
     }
     let asked = conductor
@@ -194,6 +162,61 @@ fn map_check(args: &[&str]) -> Result<(), String> {
         .count();
     println!("{found} of {asked} cues resolved");
     Ok(())
+}
+
+/// One line about how a cue resolved, and whether it found music.
+fn describe_resolution(
+    res: &Resolution,
+    cue: &underscore_map::Cue,
+    lib: &dyn underscore_library::Library,
+) -> (String, bool) {
+    let describe = |id: &underscore_library::ItemId| {
+        lib.item(id).map_or_else(
+            |_| id.to_string(),
+            |it| {
+                format!(
+                    "{}{}",
+                    it.title,
+                    it.artist.map(|a| format!(" by {a}")).unwrap_or_default()
+                )
+            },
+        )
+    };
+    match res {
+        Resolution::Track(id) => (format!("track    {}", describe(id)), true),
+        Resolution::Vibe(id) => (
+            format!("vibe     {}  (for {})", describe(id), cue.vibe.join(", ")),
+            true,
+        ),
+        Resolution::Axes(id) => {
+            let (e, v) = (
+                cue.energy.unwrap_or(f32::NAN),
+                cue.valence.unwrap_or(f32::NAN),
+            );
+            (
+                format!(
+                    "axes     {}  (for energy {e:.1} valence {v:.1})",
+                    describe(id)
+                ),
+                true,
+            )
+        }
+        Resolution::Silence => ("silence".to_string(), false),
+        Resolution::Missing => {
+            let mut wanted: Vec<String> = cue
+                .track
+                .iter()
+                .map(|t| format!("{} by {}", t.title, t.artist))
+                .collect();
+            if !cue.vibe.is_empty() {
+                wanted.push(format!("anything {}", cue.vibe.join(", ")));
+            }
+            if cue.has_axes() {
+                wanted.push("anything near its energy and valence".to_string());
+            }
+            (format!("MISSING  wanted {}", wanted.join(", or ")), false)
+        }
+    }
 }
 
 fn clock(d: Duration) -> String {

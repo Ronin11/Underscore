@@ -149,7 +149,16 @@ pub struct Cue {
     /// `track` is absent or not in the library.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub vibe: Vec<String>,
-    /// Play nothing. Excludes `track` and `vibe`.
+    /// How much energy the music should have, 1 (still) to 5 (peak). With
+    /// `valence`, picks a track by where it sits on the same axes when
+    /// `track` is absent or not in the library and the library knows its
+    /// songs' coordinates. Words-free, so it works across libraries.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub energy: Option<f32>,
+    /// Emotional colour the music should carry, -1 (dark) to 1 (light).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub valence: Option<f32>,
+    /// Play nothing. Excludes `track`, `vibe`, `energy` and `valence`.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub silence: bool,
     /// Which part of the track, and whether to repeat it. Absent means the
@@ -165,6 +174,14 @@ pub struct Cue {
     /// Overrides the default fade out.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fade_out: Option<Time>,
+}
+
+impl Cue {
+    /// Whether the cue asks for music by its coordinates.
+    #[must_use]
+    pub fn has_axes(&self) -> bool {
+        self.energy.is_some() || self.valence.is_some()
+    }
 }
 
 /// A place in the book: an offset into a chapter, or into the whole
@@ -257,6 +274,11 @@ pub enum Error {
         /// Index into `cues`.
         cue: usize,
     },
+    /// A cue's energy is outside 1 to 5, or its valence outside -1 to 1.
+    Axes {
+        /// Index into `cues`.
+        cue: usize,
+    },
     /// A cue's region ends at or before it starts.
     Region {
         /// Index into `cues`.
@@ -287,6 +309,13 @@ impl fmt::Display for Error {
             }
             Self::Empty { cue } => {
                 write!(f, "cue {} names no track, no vibe, and no silence", cue + 1)
+            }
+            Self::Axes { cue } => {
+                write!(
+                    f,
+                    "cue {} has energy outside 1..5 or valence outside -1..1",
+                    cue + 1
+                )
             }
             Self::Region { cue } => {
                 write!(f, "cue {} has a region that ends before it starts", cue + 1)
@@ -349,12 +378,17 @@ impl Map {
             return Err(Error::Version(self.version));
         }
         for (cue, c) in self.cues.iter().enumerate() {
-            let names_music = c.track.is_some() || !c.vibe.is_empty();
+            let names_music = c.track.is_some() || !c.vibe.is_empty() || c.has_axes();
             if c.silence && names_music {
                 return Err(Error::Conflict { cue });
             }
             if !c.silence && !names_music {
                 return Err(Error::Empty { cue });
+            }
+            if c.energy.is_some_and(|e| !(1.0..=5.0).contains(&e))
+                || c.valence.is_some_and(|v| !(-1.0..=1.0).contains(&v))
+            {
+                return Err(Error::Axes { cue });
             }
             if let Some(r) = &c.region
                 && r.end.is_some_and(|e| e <= r.start)

@@ -1106,6 +1106,7 @@ impl LibraryItem {
             tags,
             chapters,
             format,
+            axes: None,
         })
     }
 }
