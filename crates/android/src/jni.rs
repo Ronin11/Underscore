@@ -1267,7 +1267,7 @@ pub extern "system" fn Java_io_github_ronin11_underscore_Engine_nativeMapServerB
 
 /// A map from what this phone heard of book `key`: each minute of its
 /// transcript under `dir` rated by the scene model (fetched into `dir`
-/// the first time, about 44 MB), cues asking for music by energy and
+/// the first time, about 60 MB), cues asking for music by energy and
 /// valence. JSON `{"map", "cues", "passages", "coveredMs", "complete"}`
 /// or `{"error": ...}`. Slow: a background thread.
 #[unsafe(no_mangle)]

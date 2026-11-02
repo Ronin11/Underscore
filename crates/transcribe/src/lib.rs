@@ -584,7 +584,7 @@ pub fn scene_model_ready(dir: &Path) -> bool {
 }
 
 /// Download the scene model into `dir`, unless it is already there. Four
-/// files, about 44 MB in all; `progress` hears bytes so far and the total
+/// files, about 60 MB in all; `progress` hears bytes so far and the total
 /// of the file being fetched. Returns the model directory.
 ///
 /// # Errors

@@ -125,7 +125,7 @@ class Engine(sampleRate: Int, val channels: Int) : AutoCloseable {
     /**
      * A map from what this phone heard of book [key]: JSON with `map` (TOML),
      * `cues`, `passages`, `coveredMs` and `complete`, or `error`. Fetches the
-     * scene model into [dir] the first time (44 MB). Slow: not on the main thread.
+     * scene model into [dir] the first time (60 MB). Slow: not on the main thread.
      */
     fun mapFromTranscript(dir: String, key: String, lengthMs: Long): String = nativeMapFromTranscript(h(), dir, key, lengthMs)
 

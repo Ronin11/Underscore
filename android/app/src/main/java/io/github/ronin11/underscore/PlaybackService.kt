@@ -1147,7 +1147,7 @@ class PlaybackService : Service() {
      * Make a map from what this phone heard of the open book and follow
      * it: each minute of the transcript rated for energy and mood, the
      * music picked by those coordinates from the music server or folder.
-     * Slow (the scene model is fetched once, 44 MB; then about a second a
+     * Slow (the scene model is fetched once, 60 MB; then about a second a
      * chapter): its own thread, [onDone] on the main thread with null or
      * what went wrong.
      */

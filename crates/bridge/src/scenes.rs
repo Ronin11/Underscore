@@ -161,7 +161,7 @@ impl Built {
 
 /// Rate what the transcriber has heard of book `key` and write a map for
 /// it. `dir` is the transcriber's directory: the transcript is read from
-/// there, the scene model is kept there (fetched once, about 44 MB) and
+/// there, the scene model is kept there (fetched once, about 60 MB) and
 /// the ratings go beside the transcript. Slow: a thread of its own.
 ///
 /// # Errors

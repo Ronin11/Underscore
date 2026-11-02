@@ -262,7 +262,7 @@ which can tell dialogue from narration where the text alone cannot
 The transcript can also make a map with no server at all. The Music
 screen's "Make a map from what this phone heard" rates each minute of
 the transcript with the scene model (a 7.7M-parameter encoder from the
-zwhisper repository, fetched once into the same `whisper` folder, 44 MB)
+zwhisper repository, fetched once into the same `whisper` folder, 60 MB)
 on three axes: whether music belongs there, energy from 1 to 5, and
 colour from dark to light. `crates/bridge/src/scenes.rs` turns the
 ratings into cues that ask for music by `energy` and `valence`, joining
