@@ -183,6 +183,59 @@ impl Subsonic {
     }
 
     /// Load the song list if it has not been loaded yet.
+    /// Songs loaded so far, as a count.
+    #[must_use]
+    pub fn items_loaded(&self) -> usize {
+        self.songs
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .items
+            .len()
+    }
+
+    /// Where the song list is kept between runs, so a map can be followed
+    /// while the server is out of reach.
+    fn catalog_path(&self, cache: &Cache) -> PathBuf {
+        cache.dir().join(format!("{}-songs.json", self.name))
+    }
+
+    /// Write the loaded song list beside the cache.
+    ///
+    /// # Errors
+    /// The file could not be written.
+    pub fn save_catalog(&self, cache: &Cache) -> Result<(), Error> {
+        let path = self.catalog_path(cache);
+        let items = &self
+            .songs
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .items;
+        let json =
+            serde_json::to_vec(items).map_err(|e| Error::Backend(format!("song list: {e}")))?;
+        let tmp = path.with_extension("json.tmp");
+        std::fs::write(&tmp, json).map_err(|e| Error::Backend(format!("song list: {e}")))?;
+        std::fs::rename(&tmp, &path).map_err(|e| Error::Backend(format!("song list: {e}")))?;
+        Ok(())
+    }
+
+    /// Load the song list saved by [`Self::save_catalog`]. Returns how many
+    /// songs it holds; zero when there is no saved list.
+    pub fn load_catalog(&self, cache: &Cache) -> usize {
+        let Ok(bytes) = std::fs::read(self.catalog_path(cache)) else {
+            return 0;
+        };
+        let Ok(items) = serde_json::from_slice::<Vec<Item>>(&bytes) else {
+            return 0;
+        };
+        let n = items.len();
+        let titles = items.iter().map(|i| normalize(&i.title)).collect();
+        *self
+            .songs
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Catalog { items, titles };
+        n
+    }
+
     fn ensure_loaded(&self) -> Result<(), Error> {
         let empty = self
             .songs

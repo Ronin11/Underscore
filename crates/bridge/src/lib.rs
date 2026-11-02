@@ -631,19 +631,29 @@ impl Bridge {
     /// is a search in memory, so fitting it later is cheap under the lock.
     ///
     /// # Errors
-    /// The map does not parse, the server cannot be read or holds no
-    /// music, or the cache directory cannot be created.
+    /// The map does not parse, the server holds no music or cannot be
+    /// read and no song list was saved from an earlier time, or the cache
+    /// directory cannot be created.
     pub fn prepare_map_from_server(
         toml: &str,
         server: Arc<Subsonic>,
         cache_dir: &Path,
     ) -> Result<MapPlayback, String> {
         let map = Map::parse(toml).map_err(|e| e.to_string())?;
-        let n = server.refresh_items().map_err(|e| e.to_string())?;
-        if n == 0 {
-            return Err(format!("no music on {}", server.base()));
-        }
         let cache = Cache::open(cache_dir).map_err(|e| format!("cache: {e}"))?;
+        // The server's list when it answers, the saved one when it does not: a
+        // map whose music is already on the phone plays with no network.
+        match server.refresh_items() {
+            Ok(0) => return Err(format!("no music on {}", server.base())),
+            Ok(_) => {
+                let _ = server.save_catalog(&cache);
+            }
+            Err(e) => {
+                if server.load_catalog(&cache) == 0 {
+                    return Err(e.to_string());
+                }
+            }
+        }
         Ok(MapPlayback::new(map, server, cache))
     }
 
