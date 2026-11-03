@@ -275,6 +275,10 @@ class PlaybackService : Service() {
     override fun onBind(intent: Intent?): IBinder = binder
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        // Each screen starts this service with startForegroundService, and the
+        // system kills an app that does not answer every one of those, even
+        // once the service is running. It can refuse from the background.
+        runCatching { startForeground() }
         when (intent?.action) {
             ACTION_PLAY -> play(History.By.NOTIFICATION)
             ACTION_PAUSE -> pause(History.By.NOTIFICATION)
@@ -1974,7 +1978,7 @@ class PlaybackService : Service() {
     }
 
     private fun startForeground() {
-        val n = buildNotification(playing = false, chapter = null)
+        val n = buildNotification(shownPlaying, shownChapter)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             startForeground(NOTIFICATION_ID, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK)
         } else {
