@@ -105,6 +105,7 @@ pub fn load_ratings(path: &Path) -> Vec<Rated> {
 }
 
 /// Write ratings, replacing the file.
+#[cfg_attr(not(feature = "transcribe"), allow(dead_code))] // only `build` and tests write
 fn save_ratings(path: &Path, rated: &[Rated]) {
     if let Some(dir) = path.parent() {
         let _ = fs::create_dir_all(dir);
@@ -228,6 +229,9 @@ pub fn build(
 }
 
 /// Without the speech engine there is no scene model either.
+///
+/// # Errors
+/// Always: this build cannot rate scenes.
 #[cfg(not(feature = "transcribe"))]
 pub fn build(
     _dir: &Path,
