@@ -46,15 +46,22 @@ pub struct Options {
     pub valence_step: f32,
     /// A passage whose silence probability passes this plays nothing.
     pub silence_at: f32,
+    /// A gap between passages up to this long is the narrator pausing, so
+    /// the music carries over it. A longer one is a stretch not heard yet.
+    pub pause: Duration,
 }
 
 impl Default for Options {
     fn default() -> Self {
         Self {
             min_cue: Duration::from_secs(120),
-            energy_step: 1.0,
-            valence_step: 0.6,
+            // About a quarter of the spread a whole book's ratings have, and
+            // equal as far as `Axes::distance` is concerned, which counts
+            // energy at half.
+            energy_step: 0.4,
+            valence_step: 0.2,
             silence_at: 0.5,
+            pause: Duration::from_secs(10),
         }
     }
 }
@@ -208,12 +215,23 @@ pub fn build(
             .ok_or("no scene model")?
             .rate(&p.text)
             .map_err(|e| format!("scene model: {e}"))?;
+        if !(axes.silence.is_finite()
+            && axes.energy_mean.is_finite()
+            && axes.valence_mean.is_finite())
+        {
+            return Err(format!(
+                "scene model: no rating for the passage at {}",
+                clock(p.start)
+            ));
+        }
+        // Rounded as they are kept, so a map made from kept ratings is the
+        // same map.
         rated.push(Rated {
             start: p.start,
             end: p.end,
-            silence: axes.silence,
-            energy: axes.energy_mean,
-            valence: axes.valence_mean,
+            silence: round(axes.silence, 3),
+            energy: round(axes.energy_mean, 3),
+            valence: round(axes.valence_mean, 3),
         });
     }
     save_ratings(&path, &rated);
@@ -294,13 +312,19 @@ impl Cue {
 /// contiguous, agrees on silence, and stays within a step of the cue's
 /// running energy and valence; then cues shorter than `min_cue` join the
 /// neighbour they are most like, and neighbours left alike by that join too.
+/// A passage reaches over a pause to the next one, since a gap between cues
+/// would fade the music out for the narrator's breath.
 fn cues(rated: &[Rated], o: &Options) -> Vec<Cue> {
     let mut out: Vec<Cue> = Vec::new();
-    for r in rated {
+    for (i, r) in rated.iter().enumerate() {
         let silent = r.silence > o.silence_at;
+        let end = rated
+            .get(i + 1)
+            .filter(|next| next.start.saturating_sub(r.end) <= o.pause)
+            .map_or(r.end, |next| next.start);
         let fresh = Cue {
             start: r.start,
-            end: r.end,
+            end,
             silent,
             energy: r.energy,
             valence: r.valence,
@@ -388,7 +412,14 @@ pub fn compose(
         "\n[defaults]\nfade_in = \"6\"\nfade_out = \"6\"\ncrossfade = \"5\"\nlevel_db = -6\n",
     );
     for c in cues(rated, o) {
-        let end = c.end.min(length.max(c.end));
+        // No cue runs past the book. A length of zero means it is not known.
+        let end = if length.is_zero() {
+            c.end
+        } else if c.start >= length {
+            continue;
+        } else {
+            c.end.min(length)
+        };
         let _ = writeln!(
             out,
             "\n[[cue]]\nat = \"{}\"\nuntil = \"{}\"",
@@ -526,13 +557,60 @@ mod tests {
             r(0, 60, 0.1, 2.0, 0.0),
             r(60, 120, 0.1, 2.0, 0.0),
             r(120, 180, 0.1, 2.0, 0.0),
-            r(180, 240, 0.1, 4.5, 0.0), // one loud minute
+            r(180, 240, 0.1, 2.8, 0.0), // one loud minute
             r(240, 300, 0.1, 2.2, 0.0),
             r(300, 360, 0.1, 2.1, 0.0),
         ];
         let c = cues(&rated, &Options::default());
         assert_eq!(c.len(), 1, "{c:?}");
         assert_eq!((c[0].start, c[0].end), (s(0), s(360)));
+    }
+
+    /// Whisper's segments leave a breath between passages, under a second
+    /// or so. It must neither split a cue nor fade the music out.
+    #[test]
+    fn a_pause_neither_splits_a_cue_nor_leaves_a_gap() {
+        let at = |a: u64, b: u64, energy: f32| Rated {
+            start: Duration::from_millis(a),
+            end: Duration::from_millis(b),
+            silence: 0.0,
+            energy,
+            valence: 0.0,
+        };
+        let rated = [
+            at(0, 60_000, 2.0),
+            at(60_400, 120_000, 2.0),
+            at(121_000, 180_000, 2.0),
+            at(183_900, 240_000, 4.0),
+            at(240_500, 300_000, 4.0),
+            at(300_700, 360_000, 4.0),
+        ];
+        let c = cues(&rated, &Options::default());
+        assert_eq!(c.len(), 2, "{c:?}");
+        assert_eq!(c[0].start, Duration::ZERO);
+        assert_eq!(c[0].end, c[1].start, "no gap for the music to fade in");
+        assert_eq!(c[1].end, s(360));
+    }
+
+    #[test]
+    fn no_cue_runs_past_the_book() {
+        let rated = [r(0, 60, 0.1, 2.0, 0.0), r(60, 200, 0.1, 2.0, 0.0)];
+        let toml = compose(&rated, &segs(), s(180), true, &Options::default()).unwrap();
+        assert!(toml.contains("until = \"3:00.0\""), "{toml}");
+        let past = compose(&rated, &segs(), s(60), true, &Options::default()).unwrap();
+        assert!(!past.contains("at = \"3:20"), "{past}");
+        let unknown = compose(&rated, &segs(), Duration::ZERO, true, &Options::default()).unwrap();
+        assert!(unknown.contains("until = \"3:20.0\""), "{unknown}");
+    }
+
+    /// Rust writes 3.0 as `3`, which TOML reads as an integer.
+    #[test]
+    fn whole_numbers_parse_as_coordinates() {
+        let rated = [r(0, 60, 0.1, 3.0, 0.0), r(60, 200, 0.1, 3.0, 0.0)];
+        let toml = compose(&rated, &segs(), s(3600), true, &Options::default()).unwrap();
+        let map = Map::parse(&toml).unwrap();
+        assert_eq!(map.cues[0].energy, Some(3.0));
+        assert_eq!(map.cues[0].valence, Some(0.0));
     }
 
     #[test]
@@ -619,6 +697,10 @@ mod tests {
         // The second time, every passage is already rated.
         let again = build(&dir, "test", Duration::from_mins(15), 4, &stop).unwrap();
         assert_eq!(again.map, built.map);
+        // How many threads rate a passage must not change what it is rated.
+        fs::remove_file(ratings_path(&dir, "test")).unwrap();
+        let alone = build(&dir, "test", Duration::from_mins(15), 1, &stop).unwrap();
+        assert_eq!(alone.map, built.map);
         let _ = fs::remove_dir_all(&dir);
     }
 }
