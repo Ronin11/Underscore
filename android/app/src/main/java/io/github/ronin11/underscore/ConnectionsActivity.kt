@@ -83,6 +83,7 @@ class ConnectionsActivity : ServiceActivity() {
             else -> "${s.musicServerUrl}, not signed in. Tap to sign in."
         }
         rows["folder"]?.summary = settings.musicDir
+        rows["scores"]?.summary = s?.scoringLine() ?: "Starting…"
         for (source in setUp) {
             rows["sleep:${source.key}"]?.summary = when {
                 Sleep.listening(settings, source) -> "Auto is on and listening"
@@ -107,6 +108,11 @@ class ConnectionsActivity : ServiceActivity() {
         if (!musicServer && !folder) {
             music.addView(addRow("Add a music server") { musicServerDialog() })
             music.addView(addRow("Add a music folder on this phone") { pickMusicFolder.launch(null) })
+        } else {
+            music.addView(keep("scores", row("Score my music", null) {
+                service?.let { it.setScoring(!it.scoringOn) }
+                refresh()
+            }))
         }
         mapsSection.removeAllViews()
         if (mapServer) {

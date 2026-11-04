@@ -38,9 +38,11 @@ class MapsActivity : ServiceActivity() {
     private lateinit var nowWhy: TextView
     private lateinit var musicRow: Row
     private lateinit var mapsList: LinearLayout
+    private lateinit var keptList: LinearLayout
     private lateinit var readRow: Row
     private lateinit var clearRow: Row
     private var mapsShown: String? = null
+    private var keptShown: String? = null
 
     private val pickMap = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         uri?.let { loadMap(it) }
@@ -58,7 +60,7 @@ class MapsActivity : ServiceActivity() {
             toast("Could not read ${name ?: "the map"}")
             return
         }
-        s.loadMap(text, name) { problem ->
+        s.loadMap(text, name, pinned = true) { problem ->
             if (problem != null) toast(problem)
             refresh()
         }
@@ -101,6 +103,7 @@ class MapsActivity : ServiceActivity() {
         clearRow.view.isEnabled = e.hasMap
         clearRow.view.alpha = if (e.hasMap) 1f else 0.4f
         showMaps(s)
+        showKept(s)
     }
 
     /** A field of a cue from the engine, or null when absent, null or empty. */
@@ -213,7 +216,7 @@ class MapsActivity : ServiceActivity() {
         val bm = s.bookMaps?.takeIf { s.bookFromServer && s.openKey == "abs:${it.book}" }
         val job = bm?.job?.takeIf { it.active }
         val shape = listOf(
-            s.mapServerUrl, s.bookFromServer, s.speechName, s.mapName, bm?.default,
+            s.mapServerUrl, s.bookFromServer, s.speechName, s.mapName, s.mapPinned, bm?.default,
             bm?.maps?.joinToString { "${it.id}${it.updated}${it.cues}" }, job?.done?.size, job?.message,
         ).joinToString("|")
         if (shape == mapsShown) return
@@ -243,7 +246,7 @@ class MapsActivity : ServiceActivity() {
         }
         if (bm.maps.isEmpty() && job == null) mapsList.addView(row("No maps for this book yet", null, null).view)
         for (m in bm.maps) {
-            val chosen = m.id == bm.default
+            val chosen = m.id == bm.default && !s.mapPinned
             val state = if (m.complete) "${m.cues} cues" else "${m.cues} cues so far, still being made"
             val note = if (chosen) "Plays with this book.  $state" else state
             mapsList.addView(row((if (chosen) "● " else "") + m.name, note) { mapActions(s, m, chosen) }.view)
@@ -270,6 +273,44 @@ class MapsActivity : ServiceActivity() {
                 when (items[which]) {
                     "Read it" -> readServerMap(s, m)
                     else -> { s.chooseMap(m.id); refresh() }
+                }
+            }
+            .show()
+    }
+
+    /**
+     * The maps the phone keeps for this book, rebuilt only when they
+     * change. The map server's are in its own list, unless it is away.
+     */
+    private fun showKept(s: PlaybackService) {
+        val listed = s.bookMaps?.takeIf { s.bookFromServer && s.openKey == "abs:${it.book}" }?.maps?.map { it.name }.orEmpty()
+        val kept = s.openKey?.let { s.storage.maps(it) }.orEmpty().filter { it.name !in listed }
+        val shape = kept.joinToString("|") { "${it.name}${it.chosen}" }
+        if (shape == keptShown) return
+        keptShown = shape
+        keptList.removeAllViews()
+        for (m in kept) {
+            val note = if (m.chosen) "Plays with this book." else "Tap to play this book with it."
+            keptList.addView(row((if (m.chosen) "● " else "") + m.name, note) { keptActions(s, m) }.view)
+        }
+    }
+
+    private fun keptActions(s: PlaybackService, m: Storage.KeptMap) {
+        val items = mutableListOf<String>()
+        if (!m.chosen) items += "Play this book with it"
+        items += "Read it"
+        items += "Remove it"
+        AlertDialog.Builder(this)
+            .setTitle(m.name)
+            .setItems(items.toTypedArray()) { _, which ->
+                when (items[which]) {
+                    "Read it" -> s.openKey?.let { s.storage.map(it, m.name) }?.let { lines(m.name, MapText.lines(it, titles(s))) }
+                    "Remove it" -> { s.forgetKeptMap(m.name); mapsShown = null; refresh() }
+                    else -> s.playKeptMap(m.name) { problem ->
+                        if (problem != null) toast(problem)
+                        mapsShown = null
+                        refresh()
+                    }
                 }
             }
             .show()
@@ -377,6 +418,8 @@ class MapsActivity : ServiceActivity() {
 
         list.addView(divider())
         list.addView(heading("On this phone"))
+        keptList = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        list.addView(keptList)
         list.addView(
             row(
                 "Make a map from what this phone heard",
@@ -386,7 +429,11 @@ class MapsActivity : ServiceActivity() {
                 val s = service ?: return@row
                 toast("Listening back…")
                 s.mapFromHere { problem ->
-                    toast(problem ?: "Following the map this phone made")
+                    val noSongs = Regex("""\b0 of \d+ cues found""").containsMatchIn(s.engine.mapStatus)
+                    toast(
+                        problem ?: if (noSongs) "Map made, but no songs have scores yet. Turn on Score my music in Connections."
+                        else "Following the map this phone made",
+                    )
                     mapsShown = null
                     refresh()
                 }

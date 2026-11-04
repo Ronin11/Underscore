@@ -54,16 +54,28 @@ class Engine(sampleRate: Int, val channels: Int) : AutoCloseable {
      * is slow: call it from a background thread. Returns null when the map
      * is loaded, otherwise what was wrong.
      */
-    fun loadMap(toml: String, musicDir: String, cacheDir: String): String? =
-        nativeLoadMap(h(), toml, musicDir, cacheDir)
+    fun loadMap(toml: String, musicDir: String, cacheDir: String, scoresDir: String): String? =
+        nativeLoadMap(h(), toml, musicDir, cacheDir, scoresDir)
     /**
      * Follow a music map that plays from the music server, which must be
      * signed in. Reads the server's whole song list, so it is slow: call it
      * from a background thread. Returns null when the map is loaded,
      * otherwise what was wrong.
      */
-    fun loadMapFromServer(toml: String, cacheDir: String): String? =
-        nativeLoadMapFromServer(h(), toml, cacheDir)
+    fun loadMapFromServer(toml: String, cacheDir: String, scoresDir: String): String? =
+        nativeLoadMapFromServer(h(), toml, cacheDir, scoresDir)
+    /**
+     * Score the music server's songs on this device, or with [musicDir] a
+     * music folder's, until done or stopped. Blocks for a long time, and
+     * from a server downloads each song. Null, or what went wrong.
+     */
+    fun songsScore(musicDir: String?, cacheDir: String, scoresDir: String): String? =
+        if (musicDir != null) nativeSongsScoreFolder(h(), musicDir, cacheDir, scoresDir)
+        else nativeSongsScoreServer(h(), cacheDir, scoresDir)
+    /** Stop scoring after the song it is on. */
+    fun songsScoreStop() = nativeSongsScoreStop(h())
+    /** How scoring stands, as JSON: running, scored, total, failed, error, finished. */
+    val songsScoreStatus: String get() = nativeSongsScoreStatus(h())
     /** Stop following the map and fade its music out. */
     fun clearMap() = nativeClearMap(h())
     val hasMap: Boolean get() = nativeHasMap(h())
@@ -212,8 +224,12 @@ class Engine(sampleRate: Int, val channels: Int) : AutoCloseable {
     private external fun nativeSeekChapter(handle: Long, index: Int): Boolean
     private external fun nativeSetSleepEndOfChapter(handle: Long, nowMs: Long)
     private external fun nativeSleepAtChapterEnd(handle: Long): Boolean
-    private external fun nativeLoadMap(handle: Long, toml: String, musicDir: String, cacheDir: String): String?
-    private external fun nativeLoadMapFromServer(handle: Long, toml: String, cacheDir: String): String?
+    private external fun nativeLoadMap(handle: Long, toml: String, musicDir: String, cacheDir: String, scoresDir: String): String?
+    private external fun nativeLoadMapFromServer(handle: Long, toml: String, cacheDir: String, scoresDir: String): String?
+    private external fun nativeSongsScoreServer(handle: Long, cacheDir: String, scoresDir: String): String?
+    private external fun nativeSongsScoreFolder(handle: Long, musicDir: String, cacheDir: String, scoresDir: String): String?
+    private external fun nativeSongsScoreStop(handle: Long)
+    private external fun nativeSongsScoreStatus(handle: Long): String
     private external fun nativeClearMap(handle: Long)
     private external fun nativeMusicLogin(handle: Long, url: String, username: String, secret: String): String?
     private external fun nativeMusicResume(handle: Long, url: String, user: String, salt: String, token: String): String?

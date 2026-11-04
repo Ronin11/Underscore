@@ -30,9 +30,11 @@ crates/library   The Library trait (list, search, fetch, progress), LocalLibrary
                  Subsonic-compatible music server such as Navidrome
                  (subsonic.rs), the per-stream Cache, the Conductor
                  that turns a map plus the book position into player
-                 directions, and keep.rs, which decides which downloads
+                 directions, keep.rs, which decides which downloads
                  go when space runs short without taking music another
-                 book shares.
+                 book shares, and hearing.rs, which scores a song on the
+                 scene axes on the device with the model in song_model.rs,
+                 written by tools/song-model/train.py.
 crates/transcribe  Speech to text on the device with zwhisper, a Zig engine in
                  its own repo, vendored as the submodule
                  crates/transcribe/zwhisper (`git submodule update --init`;
@@ -45,7 +47,8 @@ crates/bridge    Bridge (plain Rust over Player, no platform code), follow.rs
                  keeps a lead on playback and writes a transcript per book;
                  its speech engine is the `transcribe` feature, on by
                  default), scenes.rs (that transcript rated by the scene
-                 model and written as a map). What every app shell calls.
+                 model and written as a map), songs.rs (a run scoring a
+                 library's songs). What every app shell calls.
 crates/android   jni.rs only: JNI exports, each a thin call into the bridge.
 crates/cli       `underscore` binary. `scan` and `map check`; no playback yet.
 crates/mapserver `underscore-maps`: maps for an Audiobookshelf server's books,

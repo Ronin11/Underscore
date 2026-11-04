@@ -13,9 +13,10 @@ import java.io.File
  * decided in Rust (`crates/library/src/keep.rs`); this keeps the list and
  * does the deleting.
  *
- * Each book's map is kept here too, by book, so a book plays with its
- * music offline and coming back to a book brings its map back. Maps and
- * transcripts are small and are never removed to make room.
+ * Each book's maps are kept here too, as many as it has, with which one it
+ * plays with, so a book plays with its music offline and coming back to a
+ * book brings its map back. Maps and transcripts are small and are never
+ * removed to make room.
  */
 class Storage(context: Context) {
     private val file = File(context.filesDir, "storage.json")
@@ -68,30 +69,140 @@ class Storage(context: Context) {
         save(all)
     }
 
-    /** The map kept for book [key], with the name it was loaded as. */
-    fun map(key: String): Pair<String, String>? {
-        val f = mapFile(key)
-        val text = runCatching { f.readText() }.getOrNull() ?: return null
-        val name = runCatching { File(f.path + ".name").readText() }.getOrNull() ?: "map"
-        return text to name
+    /** A map kept for a book. [chosen] is the one the book plays with. */
+    data class KeptMap(val name: String, val chosen: Boolean)
+
+    /** The maps kept for book [key], oldest first. */
+    @Synchronized
+    fun maps(key: String): List<KeptMap> {
+        val shelf = shelf(key)
+        return shelf.files.keys.map { KeptMap(it, it == shelf.chosen) }
     }
 
-    fun saveMap(key: String, toml: String, name: String) {
-        mapsDir.mkdirs()
+    /** The map book [key] plays with, and its name. */
+    @Synchronized
+    fun map(key: String): Pair<String, String>? {
+        val name = shelf(key).chosen ?: return null
+        return map(key, name)?.let { it to name }
+    }
+
+    /** The kept map called [name], or null. */
+    @Synchronized
+    fun map(key: String, name: String): String? {
+        val file = shelf(key).files[name] ?: return null
+        return runCatching { File(bookDir(key), file).readText() }.getOrNull()
+    }
+
+    /** Whether the listener chose the playing map, so nothing from a server takes its place. */
+    @Synchronized
+    fun mapPinned(key: String): Boolean = shelf(key).pinned
+
+    /**
+     * Keep [toml] as [name] and have the book play with it. A map of the
+     * same name is replaced. [pinned] says whether the listener chose it;
+     * null keeps what was known about this map.
+     */
+    @Synchronized
+    fun saveMap(key: String, toml: String, name: String, pinned: Boolean? = null) {
+        val shelf = shelf(key)
         runCatching {
-            mapFile(key).writeText(toml)
-            File(mapFile(key).path + ".name").writeText(name)
+            write(key, shelf, name, toml)
+            shelf.pinned = pinned ?: (shelf.pinned && shelf.chosen == name)
+            shelf.chosen = name
+            writeShelf(key, shelf)
         }
     }
 
-    fun forgetMap(key: String) {
-        mapFile(key).delete()
-        File(mapFile(key).path + ".name").delete()
+    /** Keep [toml] as [name] without playing it. */
+    @Synchronized
+    fun keepMap(key: String, toml: String, name: String) {
+        val shelf = shelf(key)
+        runCatching {
+            write(key, shelf, name, toml)
+            writeShelf(key, shelf)
+        }
     }
 
-    /** Book keys hold any characters; the file name is a hash of the key. */
-    private fun mapFile(key: String): File =
-        File(mapsDir, "%016x.toml".format(key.fold(-0x340d631b7bdddcdbL) { h, c -> (h xor c.code.toLong()) * 0x100000001b3L }))
+    /** The listener chose a map the server keeps track of: the server's default rules again. */
+    @Synchronized
+    fun unpinMap(key: String) {
+        val shelf = shelf(key)
+        if (!shelf.pinned) return
+        shelf.pinned = false
+        runCatching { writeShelf(key, shelf) }
+    }
+
+    /** Forget map [name], by default the one the book plays with. */
+    @Synchronized
+    fun forgetMap(key: String, name: String? = null) {
+        val shelf = shelf(key)
+        val gone = name ?: shelf.chosen ?: return
+        shelf.files.remove(gone)?.let { File(bookDir(key), it).delete() }
+        if (shelf.chosen == gone) {
+            shelf.chosen = null
+            shelf.pinned = false
+        }
+        runCatching { writeShelf(key, shelf) }
+    }
+
+    /** What is kept for one book: map names to files, and which map plays. */
+    private class Shelf(var chosen: String? = null, var pinned: Boolean = false, val files: LinkedHashMap<String, String> = LinkedHashMap())
+
+    private fun shelf(key: String): Shelf {
+        val shelf = Shelf()
+        val text = runCatching { File(bookDir(key), "index.json").readText() }.getOrNull()
+        if (text == null) return carryOverMap(key, shelf)
+        val o = runCatching { JSONObject(text) }.getOrNull() ?: return shelf
+        shelf.chosen = if (o.isNull("chosen")) null else o.optString("chosen").ifEmpty { null }
+        shelf.pinned = o.optBoolean("pinned")
+        val maps = o.optJSONArray("maps") ?: return shelf
+        for (i in 0 until maps.length()) {
+            val m = maps.getJSONObject(i)
+            shelf.files[m.getString("name")] = m.getString("file")
+        }
+        return shelf
+    }
+
+    /**
+     * Before a book could keep several maps, it had one file. A file's or
+     * the phone's own map was the listener's choice; a server's was not.
+     */
+    private fun carryOverMap(key: String, shelf: Shelf): Shelf {
+        val old = File(mapsDir, "${hash(key)}.toml")
+        val oldName = File(old.path + ".name")
+        val toml = runCatching { old.readText() }.getOrNull() ?: return shelf
+        val name = runCatching { oldName.readText() }.getOrNull() ?: "map"
+        runCatching {
+            write(key, shelf, name, toml)
+            shelf.chosen = name
+            shelf.pinned = name == PlaybackService.HEARD_MAP || name.endsWith(".toml")
+            writeShelf(key, shelf)
+            old.delete()
+            oldName.delete()
+        }
+        return shelf
+    }
+
+    private fun write(key: String, shelf: Shelf, name: String, toml: String) {
+        val file = "${hash(name)}.toml"
+        val dir = bookDir(key).apply { mkdirs() }
+        File(dir, "$file.tmp").apply { writeText(toml); renameTo(File(dir, file)) }
+        shelf.files[name] = file
+    }
+
+    private fun writeShelf(key: String, shelf: Shelf) {
+        val maps = JSONArray()
+        for ((name, file) in shelf.files) maps.put(JSONObject().put("name", name).put("file", file))
+        val text = JSONObject().put("chosen", shelf.chosen ?: JSONObject.NULL).put("pinned", shelf.pinned).put("maps", maps).toString()
+        val dir = bookDir(key).apply { mkdirs() }
+        File(dir, "index.json.tmp").apply { writeText(text); renameTo(File(dir, "index.json")) }
+    }
+
+    private fun bookDir(key: String) = File(mapsDir, hash(key))
+
+    /** Book keys and map names hold any characters; file names are a hash of them. */
+    private fun hash(text: String): String =
+        "%016x".format(text.fold(-0x340d631b7bdddcdbL) { h, c -> (h xor c.code.toLong()) * 0x100000001b3L })
 
     /** What a trim left: the bytes in the cache, and with ask first, the books that would make room. */
     data class Trimmed(val bytes: Long, val suggest: List<String>)

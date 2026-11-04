@@ -20,9 +20,11 @@
 pub mod abs;
 pub mod cache;
 pub mod conductor;
+pub mod hearing;
 pub mod keep;
 pub mod local;
 pub mod maps;
+mod song_model;
 pub mod stream;
 pub mod subsonic;
 
@@ -35,6 +37,7 @@ use serde::{Deserialize, Serialize};
 pub use abs::{Audiobookshelf, Credentials, OpenIdStart, Opened, ShelfBook};
 pub use cache::Cache;
 pub use conductor::{Conductor, Direction, Resolution};
+pub use hearing::SongScores;
 pub use local::LocalLibrary;
 pub use maps::MapServer;
 pub use stream::{Download, StreamReader};

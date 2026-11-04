@@ -270,7 +270,9 @@ impl Subsonic {
         self.apply_axes(&parsed)
     }
 
-    fn apply_axes(&self, axes: &std::collections::HashMap<String, Axes>) -> usize {
+    /// Put these coordinates on the loaded songs, by song id. Returns how
+    /// many songs got them.
+    pub fn apply_axes(&self, axes: &std::collections::HashMap<String, Axes>) -> usize {
         let mut songs = self
             .songs
             .write()

@@ -35,6 +35,7 @@ fn main() -> ExitCode {
         ["scan", rest @ ..] => scan(rest),
         ["map", "check", rest @ ..] => map_check(rest),
         ["abs", rest @ ..] => abs(rest),
+        ["songs", "features", dir] => song_features(dir),
         [other, ..] => Err(format!("unknown command `{other}`")),
     };
     match result {
@@ -44,6 +45,53 @@ fn main() -> ExitCode {
             ExitCode::FAILURE
         }
     }
+}
+
+/// `songs features <dir>`: what the phone hears in each song, one JSON line
+/// per file, for `tools/song-model/train.py`.
+fn song_features(dir: &str) -> Result<(), String> {
+    fn walk(dir: &std::path::Path, out: &mut Vec<PathBuf>) -> std::io::Result<()> {
+        for entry in std::fs::read_dir(dir)? {
+            let path = entry?.path();
+            if path.is_dir() {
+                walk(&path, out)?;
+            } else if path.extension().and_then(|e| e.to_str()).is_some_and(|e| {
+                underscore_library::local::EXTENSIONS.contains(&e.to_lowercase().as_str())
+            }) {
+                out.push(path);
+            }
+        }
+        Ok(())
+    }
+    let mut files = Vec::new();
+    walk(std::path::Path::new(dir), &mut files).map_err(|e| format!("{dir}: {e}"))?;
+    files.sort();
+    let queue = std::sync::Mutex::new(files.into_iter());
+    let threads = std::thread::available_parallelism().map_or(1, std::num::NonZero::get);
+    std::thread::scope(|scope| {
+        for _ in 0..threads {
+            scope.spawn(|| {
+                loop {
+                    let next = queue
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                        .next();
+                    let Some(path) = next else { break };
+                    match underscore_library::hearing::hear(&path) {
+                        Ok(features) => {
+                            let line = format!(
+                                "{{\"path\":{:?},\"features\":{features:?}}}",
+                                path.display().to_string(),
+                            );
+                            println!("{line}");
+                        }
+                        Err(e) => eprintln!("{}: {e}", path.display()),
+                    }
+                }
+            });
+        }
+    });
+    Ok(())
 }
 
 /// `scan <dir> [--speech]`: list a folder as the library sees it.
@@ -343,6 +391,7 @@ fn print_help() {
          Commands:\n\
          \x20 scan <dir> [--speech]                      List a folder as the library sees it\n\
          \x20 map check <map.toml> --music <dir> [--book <file>]\n\
+         \x20 songs features <dir>   what the phone hears in each song, for training\n\
          \x20                                            Resolve every cue of a map against a music folder\n\
          \x20 defaults                                   Print every tunable's default value\n\
          \x20 --version                                  Print the version\n\

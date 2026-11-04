@@ -164,7 +164,9 @@ details.
 A phone can also make a map alone, from the transcript its own
 transcriber writes: a small scene model rates each minute on energy,
 valence and whether music belongs at all, and the cues ask for music by
-those coordinates (`crates/bridge/src/scenes.rs`, `docs/android.md`).
+those coordinates (`crates/bridge/src/scenes.rs`, `docs/android.md`). The
+phone can score the songs itself too (`crates/library/src/hearing.rs`), so
+this works with no server beyond the music.
 
 The two stages above are kept apart there too. The model is asked for
 scenes and moods, never to browse the catalog; a plain matcher picks the

@@ -350,19 +350,26 @@ pub extern "system" fn Java_io_github_ronin11_underscore_Engine_nativeLoadMap(
     toml: JString,
     music_dir: JString,
     cache_dir: JString,
+    scores_dir: JString,
 ) -> jstring {
     let args = (
         string(&mut env, &toml),
         string(&mut env, &music_dir),
         string(&mut env, &cache_dir),
+        string(&mut env, &scores_dir),
     );
-    let (Some(toml), Some(music_dir), Some(cache_dir)) = args else {
+    let (Some(toml), Some(music_dir), Some(cache_dir), Some(scores_dir)) = args else {
         return jstr(&env, "map, music folder, and cache folder are all needed");
     };
     if handle == 0 {
         return jstr(&env, "engine closed");
     }
-    match Bridge::prepare_map(&toml, &PathBuf::from(music_dir), &PathBuf::from(cache_dir)) {
+    match Bridge::prepare_map(
+        &toml,
+        &PathBuf::from(music_dir),
+        &PathBuf::from(cache_dir),
+        &PathBuf::from(scores_dir),
+    ) {
         Ok(prepared) => {
             with(handle, false, |b| b.install_map(prepared));
             std::ptr::null_mut()
@@ -382,15 +389,25 @@ pub extern "system" fn Java_io_github_ronin11_underscore_Engine_nativeLoadMapFro
     handle: jlong,
     toml: JString,
     cache_dir: JString,
+    scores_dir: JString,
 ) -> jstring {
-    let (Some(toml), Some(cache_dir)) = (string(&mut env, &toml), string(&mut env, &cache_dir))
-    else {
+    let args = (
+        string(&mut env, &toml),
+        string(&mut env, &cache_dir),
+        string(&mut env, &scores_dir),
+    );
+    let (Some(toml), Some(cache_dir), Some(scores_dir)) = args else {
         return jstr(&env, "map and cache folder are both needed");
     };
     let Some(server) = with(handle, None, |b| b.music_server()) else {
         return jstr(&env, "not signed in to a music server");
     };
-    match Bridge::prepare_map_from_server(&toml, server, &PathBuf::from(cache_dir)) {
+    match Bridge::prepare_map_from_server(
+        &toml,
+        server,
+        &PathBuf::from(cache_dir),
+        &PathBuf::from(scores_dir),
+    ) {
         Ok(prepared) => {
             with(handle, false, |b| b.install_map(prepared));
             std::ptr::null_mut()
@@ -1057,6 +1074,88 @@ pub extern "system" fn Java_io_github_ronin11_underscore_Engine_nativeTranscribe
     _handle: jlong,
 ) -> jstring {
     jstr(&env, &underscore_bridge::transcript::status().to_string())
+}
+
+/// Score the music server's songs on this device until done or stopped.
+/// Null when it ended well, otherwise what went wrong. Blocks for a long
+/// time and downloads each song: a low-priority thread of its own.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_io_github_ronin11_underscore_Engine_nativeSongsScoreServer(
+    mut env: JNIEnv,
+    _this: JObject,
+    handle: jlong,
+    cache_dir: JString,
+    scores_dir: JString,
+) -> jstring {
+    let (Some(cache_dir), Some(scores_dir)) =
+        (string(&mut env, &cache_dir), string(&mut env, &scores_dir))
+    else {
+        return jstr(&env, "cache and scores folders are both needed");
+    };
+    let Some(server) = with(handle, None, |b| b.music_server()) else {
+        return jstr(&env, "not signed in to a music server");
+    };
+    if let Err(e) = server.refresh_items() {
+        return jstr(&env, &e.to_string());
+    }
+    match underscore_bridge::songs::run(
+        server.as_ref(),
+        &PathBuf::from(cache_dir),
+        &PathBuf::from(scores_dir),
+    ) {
+        Ok(()) => std::ptr::null_mut(),
+        Err(e) => jstr(&env, &e),
+    }
+}
+
+/// Score a music folder's songs on this device until done or stopped. Null
+/// when it ended well, otherwise what went wrong. Blocks for a long time: a
+/// low-priority thread of its own.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_io_github_ronin11_underscore_Engine_nativeSongsScoreFolder(
+    mut env: JNIEnv,
+    _this: JObject,
+    _handle: jlong,
+    music_dir: JString,
+    cache_dir: JString,
+    scores_dir: JString,
+) -> jstring {
+    let args = (
+        string(&mut env, &music_dir),
+        string(&mut env, &cache_dir),
+        string(&mut env, &scores_dir),
+    );
+    let (Some(music_dir), Some(cache_dir), Some(scores_dir)) = args else {
+        return jstr(&env, "music, cache and scores folders are all needed");
+    };
+    match underscore_bridge::songs::run_folder(
+        &PathBuf::from(music_dir),
+        &PathBuf::from(cache_dir),
+        &PathBuf::from(scores_dir),
+    ) {
+        Ok(()) => std::ptr::null_mut(),
+        Err(e) => jstr(&env, &e),
+    }
+}
+
+/// Stop scoring after the song it is on.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_io_github_ronin11_underscore_Engine_nativeSongsScoreStop(
+    _env: JNIEnv,
+    _this: JObject,
+    _handle: jlong,
+) {
+    underscore_bridge::songs::stop();
+}
+
+/// How scoring stands, as JSON.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_io_github_ronin11_underscore_Engine_nativeSongsScoreStatus(
+    env: JNIEnv,
+    _this: JObject,
+    _handle: jlong,
+) -> jstring {
+    jstr(&env, &underscore_bridge::songs::status().to_string())
 }
 
 /// The file called `name` beside server book `id`, such as its music map

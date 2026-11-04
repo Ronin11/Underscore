@@ -171,6 +171,9 @@ Done:
   controls through a media session; audio focus; pause when headphones
   come out. A player screen in the shape of the audiobook apps people
   know, a settings screen that persists, and a debug screen for the rest.
+- A phone alone can pick music by mood: a map from its own transcript, and
+  song scores it works out by hearing each song. The scores are rougher
+  than CLAP's and cannot hear singing yet (`docs/android.md`).
 
 Not done:
 

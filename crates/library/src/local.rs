@@ -164,6 +164,23 @@ impl LocalLibrary {
         })
     }
 
+    /// Put these coordinates on the scanned songs, by item id. Returns how
+    /// many songs got them.
+    pub fn apply_axes(&self, axes: &HashMap<String, crate::Axes>) -> usize {
+        let mut items = self
+            .items
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut n = 0;
+        for item in items.iter_mut() {
+            if let Some(a) = axes.get(&item.id.0) {
+                item.axes = Some(*a);
+                n += 1;
+            }
+        }
+        n
+    }
+
     /// The file behind an item id.
     fn path_of(&self, id: &ItemId) -> Option<PathBuf> {
         let (root_name, rel) = id.0.split_once('/')?;

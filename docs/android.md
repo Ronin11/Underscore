@@ -182,10 +182,32 @@ place, and follows that map again. A server book opens from the cache,
 at the position the server has, which may be newer if another app
 played it since. Without the server it opens the cached file as it is,
 at the position this app saved. A book from a file opens again through
-the read grant the picker gave, which the app keeps. Each book's map is
+the read grant the picker gave, which the app keeps. A book's maps are
 kept in the app's private files, under `files/maps`, so opening a book
-again brings its map back, offline too. Clearing the map forgets it for
-that book.
+again brings its map back, offline too. A book can keep several: the
+server's, one from a file, the one this phone made. The Music screen lists
+them under On this phone. A map the listener chose stays until they choose
+another, and a server's map then waits beside it. Clearing the map forgets
+the one playing.
+
+## Scoring songs
+
+A map made on the phone asks for music by energy and valence, so songs need
+places on those axes. Score my music, under Connections, works them out on
+the phone for the music server's songs or the music folder's. It hears ten
+seconds at a quarter, half, and three quarters of each song
+(`crates/library/src/hearing.rs`). From a server it downloads the song and
+deletes it after, unless a book already keeps it. Scores stay in
+`files/song-scores`, outside the cache that gets trimmed.
+
+It runs at low priority while it is on, never on mobile data from a server,
+and not under 30% battery unless charging. It picks up where it stopped.
+A map is fitted to new scores while the book is paused. Scores from a map
+server, from CLAP, win over the phone's for the same song.
+
+These scores are rougher than CLAP's and cannot hear singing yet. The model
+is linear and fitted mostly to one production-music library; see
+`tools/song-model/train.py`.
 
 ## History
 

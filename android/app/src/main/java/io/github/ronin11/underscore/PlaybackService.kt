@@ -19,6 +19,7 @@ import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
 import android.net.Uri
+import android.os.BatteryManager
 import android.os.Binder
 import android.os.Build
 import android.os.Handler
@@ -243,6 +244,8 @@ class PlaybackService : Service() {
             watchStop()
             watchSleep()
             watchServerMap()
+            signBackIn()
+            watchScoring()
             mainHandler.postDelayed(this, 1000)
         }
     }
@@ -514,9 +517,10 @@ class PlaybackService : Service() {
      * Follow a music map. The engine scans [musicDir] first, which takes a
      * while on a big folder, so this runs on its own thread and reports
      * through [onDone] on the main thread: null when the map is loaded,
-     * otherwise what was wrong.
+     * otherwise what was wrong. [pinned] says the listener chose this map,
+     * so a server's map will not take its place; null keeps what was known.
      */
-    fun loadMap(toml: String, name: String?, onDone: (String?) -> Unit) {
+    fun loadMap(toml: String, name: String?, pinned: Boolean? = null, onDone: (String?) -> Unit) {
         val dir = musicDir
         val fromServer = engine.hasMusicServer
         if (!fromServer && dir == null) {
@@ -533,14 +537,14 @@ class PlaybackService : Service() {
             // energy and valence then resolves offline from the saved copy.
             if (fromServer && mapServerUrl != null) engine.mapServerMusicAxes(cache.absolutePath)
             val problem = when {
-                fromServer -> engine.loadMapFromServer(toml, cache.absolutePath)
-                dir != null -> engine.loadMap(toml, dir.absolutePath, cache.absolutePath)
+                fromServer -> engine.loadMapFromServer(toml, cache.absolutePath, scoresDir.absolutePath)
+                dir != null -> engine.loadMap(toml, dir.absolutePath, cache.absolutePath, scoresDir.absolutePath)
                 else -> "Set the music folder in Settings first"
             }
             if (problem == null) {
                 mapName = name
                 if (key != null) {
-                    storage.saveMap(key, toml, name ?: "map")
+                    storage.saveMap(key, toml, name ?: "map", pinned)
                     noteMapMusic(key, toml)
                 }
             }
@@ -548,6 +552,138 @@ class PlaybackService : Service() {
             mainHandler.post { onDone(problem) }
         }, "underscore-map-load").start()
     }
+
+    // Scoring the music on this phone: where each song sits on the axes a
+    // map asks by. It runs by itself while the listener has it on, the song
+    // list is reachable, and the phone can spare it: never on mobile data
+    // from a server, and not on a low battery unless charging.
+
+    private val scoresDir: File get() = File(filesDir, "song-scores")
+    private val scorePrefs by lazy { getSharedPreferences("song_scores", Context.MODE_PRIVATE) }
+
+    /** The listener wants the music scored. */
+    val scoringOn: Boolean get() = scorePrefs.getBoolean("on", false)
+
+    @Volatile private var scoreThread: Thread? = null
+    /** Nothing is left to do until the app starts again. */
+    @Volatile private var scoringDone = false
+    private var scoreWatchedAt = 0L
+    private var scoreRetryAt = 0L
+    /** How many songs had scores the last time the map was fitted to them. */
+    private var scoresInMap = -1
+    @Volatile private var scoreWaiting: String? = null
+
+    fun setScoring(on: Boolean) {
+        scorePrefs.edit().putBoolean("on", on).apply()
+        scoringDone = false
+        scoreRetryAt = 0
+        scoreWatchedAt = 0
+        if (!on) engine.songsScoreStop()
+        watchScoring()
+    }
+
+    /** How scoring stands, in words, for Connections. */
+    fun scoringLine(): String {
+        val st = runCatching { JSONObject(engine.songsScoreStatus) }.getOrNull()
+        val scored = st?.optInt("scored") ?: 0
+        val total = st?.optInt("total") ?: 0
+        val count = if (total > 0) "$scored of $total songs. " else ""
+        val failed = st?.optInt("failed") ?: 0
+        val bad = if (failed > 0) "$failed could not be read. " else ""
+        return when {
+            !scoringOn -> "Off. ${count}Listens to each song once so maps can pick music by mood. Downloads each song on Wi-Fi only."
+            scoreThread != null -> "Scoring. $count$bad"
+            scoreWaiting != null -> "On. $count$bad${scoreWaiting}"
+            st?.optBoolean("finished") == true -> "Done. $count$bad"
+            !st?.optString("error").isNullOrEmpty() && !st!!.isNull("error") -> "On. $count$bad${st.getString("error")}"
+            else -> "On. $count$bad"
+        }.trim()
+    }
+
+    private fun batteryLow(): Boolean {
+        val b = registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED)) ?: return false
+        val plugged = b.getIntExtra(BatteryManager.EXTRA_PLUGGED, 0) != 0
+        val level = b.getIntExtra(BatteryManager.EXTRA_LEVEL, 100)
+        val scale = b.getIntExtra(BatteryManager.EXTRA_SCALE, 100).coerceAtLeast(1)
+        return !plugged && level * 100 / scale < SCORE_MIN_BATTERY
+    }
+
+    /** What keeps scoring from running now, or null. */
+    private fun scoreBlocked(fromServer: Boolean): String? {
+        val network = getSystemService(ConnectivityManager::class.java)
+        return when {
+            !fromServer && musicDir == null ->
+                if (musicServerUrl != null) "Waiting for the music server." else "Add a music server or folder."
+            fromServer && network.isActiveNetworkMetered -> "Waiting for Wi-Fi."
+            batteryLow() -> "Waiting for the battery to charge."
+            else -> null
+        }
+    }
+
+    /** On the tick: start scoring, stop it, and fit the map to new scores. */
+    private fun watchScoring() {
+        fitMapToScores()
+        val t = now()
+        if (t - scoreWatchedAt < SCORE_WATCH_MS) return
+        scoreWatchedAt = t
+        val fromServer = engine.hasMusicServer
+        val blocked = if (scoringOn) scoreBlocked(fromServer) else null
+        scoreWaiting = blocked
+        if (blocked != null) {
+            engine.songsScoreStop()
+            // Songs that failed for want of a network say nothing about the server.
+            scoreRetryAt = 0
+        }
+        if (!scoringOn || blocked != null || scoreThread != null || scoringDone || t < scoreRetryAt) return
+        val cache = File(cacheDir, "library").absolutePath
+        val folder = if (fromServer) null else musicDir?.absolutePath
+        scoreThread = Thread({
+            android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND)
+            val problem = engine.songsScore(folder, cache, scoresDir.absolutePath)
+            if (problem != null) android.util.Log.w("underscore", "scoring songs: $problem")
+            val finished = runCatching { JSONObject(engine.songsScoreStatus).optBoolean("finished") }.getOrDefault(false)
+            scoreThread = null
+            mainHandler.post {
+                if (finished) scoringDone = true
+                else if (problem != null) scoreRetryAt = now() + SCORE_RETRY_MS
+            }
+        }, "underscore-song-scores").apply { start() }
+    }
+
+    /**
+     * Fit the loaded map to the scores that have come in, so cues that had
+     * no music find some. Refitting starts the music over, so it waits
+     * while the book plays.
+     */
+    private fun fitMapToScores() {
+        if (!scoringOn || engine.isPlaying || mapLoading || !engine.hasMap) return
+        val scored = runCatching { JSONObject(engine.songsScoreStatus).optInt("scored") }.getOrDefault(0)
+        if (scored == 0 || scored < scoresInMap + SCORES_PER_REFIT && !(scoreThread == null && scored > scoresInMap)) return
+        scoresInMap = scored
+        val (toml, name) = openKey?.let { storage.map(it) } ?: return
+        loadMap(toml, name) { problem ->
+            if (problem != null) android.util.Log.w("underscore", "fitting the map to new scores: $problem")
+        }
+    }
+
+    /** Play the open book with the map kept as [name]. The listener chose it, so it stays. */
+    fun playKeptMap(name: String, onDone: (String?) -> Unit) {
+        val toml = openKey?.let { storage.map(it, name) }
+        if (toml == null) {
+            onDone("That map is gone")
+            return
+        }
+        loadMap(toml, name, pinned = true, onDone = onDone)
+    }
+
+    /** Forget the kept map [name]. If it is playing, the music stops. */
+    fun forgetKeptMap(name: String) {
+        val key = openKey ?: return
+        if (storage.map(key)?.second == name) clearMap() else storage.forgetMap(key, name)
+    }
+
+    /** Whether the listener chose the open book's map over what the servers offer. */
+    val mapPinned: Boolean get() = openKey?.let { storage.mapPinned(it) } == true
 
     /** Stop following the map, and forget it for this book. */
     fun clearMap() {
@@ -598,6 +734,34 @@ class PlaybackService : Service() {
         val problem = engine.musicResume(base, user, salt, token)
         musicServerBusy = null
         if (problem != null) android.util.Log.w("underscore", "music server: $problem")
+    }
+
+    private var signBackAt = 0L
+    private var signBackWait = SIGN_BACK_FIRST_MS
+    @Volatile private var signingBack = false
+
+    /**
+     * On the tick: an app started with no network could not sign in, so try
+     * the saved sign-ins again once there is one, less often while it fails.
+     */
+    private fun signBackIn() {
+        if (signingBack || now() < signBackAt) return
+        val books = serverUrl != null && !engine.hasServer && serverBusy == null
+        val music = musicServerUrl != null && !engine.hasMusicServer && musicServerBusy == null
+        if (!books && !music) {
+            signBackWait = SIGN_BACK_FIRST_MS
+            return
+        }
+        if (getSystemService(ConnectivityManager::class.java).activeNetwork == null) return
+        signBackAt = now() + signBackWait
+        signBackWait = (signBackWait * 2).coerceAtMost(SIGN_BACK_MOST_MS)
+        signingBack = true
+        Thread({
+            if (books) resumeServer()
+            if (music) resumeMusicServer()
+            signingBack = false
+            mainHandler.post { restoreMap() }
+        }, "underscore-sign-back").start()
     }
 
     private fun saveMusicServer(base: String) {
@@ -810,8 +974,8 @@ class PlaybackService : Service() {
 
     /**
      * Look beside the server book for a music map and a transcript, and
-     * use what is there. A map from the server replaces a different one
-     * loaded for the book; the transcript becomes the book's transcript,
+     * use what is there. A map from the server is kept with the book's
+     * others, and plays unless the listener chose another; the transcript becomes the book's transcript,
      * whole, so the phone never transcribes it and shows its captions.
      */
     private fun fetchCompanions(id: String) {
@@ -964,6 +1128,8 @@ class PlaybackService : Service() {
             toldChapter = 0
             val pick = bm.default ?: bm.maps.singleOrNull()?.id
             when {
+                // The listener chose a map; the server's stay a tap away.
+                storage.mapPinned("abs:$id") -> {}
                 pick != null -> loadServerMap(bm, pick)
                 bm.maps.size > 1 -> chooseMapFor = id
                 hasOwnMap || bm.job?.active == true -> {}
@@ -997,6 +1163,7 @@ class PlaybackService : Service() {
     fun chooseMap(mapId: String) {
         val bm = bookMaps ?: return
         chooseMapFor = null
+        storage.unpinMap("abs:${bm.book}")
         Thread({ engine.mapServerDefault(bm.book, mapId) }, "underscore-map-default").start()
         bookMaps = bm.copy(default = mapId)
         loadServerMap(bm, mapId)
@@ -1058,6 +1225,7 @@ class PlaybackService : Service() {
             chooseMap(job.map)
             return
         }
+        if (storage.mapPinned("abs:${bm.book}")) return
         val pick = bm.default ?: bm.maps.singleOrNull()?.id ?: return
         val info = bm.maps.firstOrNull { it.id == pick } ?: return
         when {
@@ -1094,17 +1262,25 @@ class PlaybackService : Service() {
         return "Making a map: $of. ${job.message}"
     }
 
-    /** Load the server's map for [id], unless the same map is loaded. Waits out a load in progress. */
+    /**
+     * Keep the server's map for [id], and load it unless the same map is
+     * loaded or the listener chose another. Waits out a load in progress.
+     */
     private fun useServerMap(id: String, toml: String) {
         if (last.getString("id", null) != id) return
         if (mapLoading) {
             mainHandler.postDelayed({ useServerMap(id, toml) }, 500)
             return
         }
-        if (mapName != null && storage.map("abs:$id")?.first == toml) return
+        val key = "abs:$id"
+        val name = "$SERVER_MAP (server)"
+        val chosen = storage.map(key)
+        storage.keepMap(key, toml, name)
+        if (storage.mapPinned(key) && chosen?.second != name) return
+        if (mapName != null && chosen?.first == toml) return
         // With nowhere to find the music, the map would only fail.
         if (!engine.hasMusicServer && musicDir == null) return
-        loadMap(toml, "$SERVER_MAP (server)") { problem ->
+        loadMap(toml, name) { problem ->
             if (problem != null) toast("The server's map for this book: $problem")
         }
     }
@@ -1173,7 +1349,7 @@ class PlaybackService : Service() {
             val toml = answer.optString("map").ifEmpty { null }
             mainHandler.post {
                 if (error != null || toml == null) onDone(error ?: "no map")
-                else loadMap(toml, HEARD_MAP) { onDone(it) }
+                else loadMap(toml, HEARD_MAP, pinned = true) { onDone(it) }
             }
         }, "underscore-map-hear").start()
     }
@@ -1781,6 +1957,7 @@ class PlaybackService : Service() {
             appendLine("engine: music ${if (engine.musicEnabled) "on" else "off"}, chapters ${engine.chapterCount}, current ${engine.currentChapter}")
             appendLine("book: ${speechName ?: "none"}; music: ${musicName ?: "none"}")
             appendLine("music folder: ${musicDir?.absolutePath ?: "none"}; map: ${mapName ?: "none"}, loading $mapLoading")
+            appendLine("song scores: on $scoringOn, ${engine.songsScoreStatus}")
             appendLine("settings: skip -${settings.skipBackSec}/+${settings.skipForwardSec} s, rewind ${settings.rewindOnResume}, music level ${settings.musicLevel}, keep screen on ${settings.keepScreenOn}")
             appendLine("map status: ${engine.mapStatus}")
             appendLine("music server: ${musicServerUrl ?: "none"}, signed in ${engine.hasMusicServer}, busy ${musicServerBusy ?: "no"}")
@@ -2024,6 +2201,13 @@ class PlaybackService : Service() {
         /** The name of a map this phone made from its own transcript. */
         const val HEARD_MAP = "Heard on this phone"
         const val SERVER_TRANSCRIPT = "underscore.transcript.json"
+        /** Below this percent, and not charging, songs wait to be scored. */
+        private const val SCORE_MIN_BATTERY = 30
+        private const val SCORE_WATCH_MS = 30_000L
+        private const val SCORE_RETRY_MS = 10 * 60_000L
+        private const val SCORES_PER_REFIT = 100
+        private const val SIGN_BACK_FIRST_MS = 15_000L
+        private const val SIGN_BACK_MOST_MS = 10 * 60_000L
         /** The map server's answer about book [id]: its maps, default, and job. */
         fun parseBookMaps(id: String, v: org.json.JSONObject): BookMaps {
             val list = v.optJSONArray("maps") ?: org.json.JSONArray()

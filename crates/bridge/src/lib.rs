@@ -27,7 +27,7 @@ use underscore_core::{Chain, LayerId, Player, PlayerConfig, RewindPolicy, SleepT
 use underscore_decode::{Chapter, FileSource, MediaSource, probe, probe_path};
 use underscore_library::{
     Audiobookshelf, Cache, Credentials, Download, ItemId, Library, LocalLibrary, MapServer,
-    OpenIdStart, Opened, Role, StreamReader, Subsonic, SubsonicLogin, conductor,
+    OpenIdStart, Opened, Role, SongScores, StreamReader, Subsonic, SubsonicLogin, conductor,
 };
 use underscore_map::Map;
 
@@ -42,6 +42,7 @@ const CLEAR_FADE: Duration = Duration::from_secs(2);
 
 pub mod follow;
 pub mod scenes;
+pub mod songs;
 pub mod transcript;
 
 /// The cache files a map's music lives in. See [`Bridge::map_files`].
@@ -611,6 +612,7 @@ impl Bridge {
         toml: &str,
         music_dir: &Path,
         cache_dir: &Path,
+        scores_dir: &Path,
     ) -> Result<MapPlayback, String> {
         let map = Map::parse(toml).map_err(|e| e.to_string())?;
         let library =
@@ -622,6 +624,7 @@ impl Bridge {
             return Err(format!("no music found under {}", music_dir.display()));
         }
         let cache = Cache::open(cache_dir).map_err(|e| format!("cache: {e}"))?;
+        library.apply_axes(SongScores::open(scores_dir, library.name()).songs());
         Ok(MapPlayback::new(map, Arc::new(library), cache))
     }
 
@@ -639,6 +642,7 @@ impl Bridge {
         toml: &str,
         server: Arc<Subsonic>,
         cache_dir: &Path,
+        scores_dir: &Path,
     ) -> Result<MapPlayback, String> {
         let map = Map::parse(toml).map_err(|e| e.to_string())?;
         let cache = Cache::open(cache_dir).map_err(|e| format!("cache: {e}"))?;
@@ -655,6 +659,8 @@ impl Bridge {
                 }
             }
         }
+        // The phone's own scores first, so the map server's, from CLAP, win.
+        server.apply_axes(SongScores::open(scores_dir, server.name()).songs());
         server.load_axes(&cache);
         Ok(MapPlayback::new(map, server, cache))
     }
@@ -1136,7 +1142,7 @@ mod tests {
         let (music, cache) = music_folder("by-hand");
         let mut b = Bridge::new(48_000, 2);
         assert!(b.load_speech_path(&fixture()));
-        let prepared = Bridge::prepare_map(MAP, &music, &cache).unwrap();
+        let prepared = Bridge::prepare_map(MAP, &music, &cache, &cache.join("scores")).unwrap();
         assert!(b.install_map(prepared));
         assert!(b.map_status().starts_with("Map: 1 of 1 cues found"));
         assert!(!b.music_loaded());
@@ -1191,7 +1197,7 @@ mod tests {
     fn a_map_with_chapters_waits_for_a_book_that_has_them() {
         let (music, cache) = music_folder("waits");
         let mut b = Bridge::new(48_000, 2);
-        let prepared = Bridge::prepare_map(MAP, &music, &cache).unwrap();
+        let prepared = Bridge::prepare_map(MAP, &music, &cache, &cache.join("scores")).unwrap();
         assert!(!b.install_map(prepared));
         assert!(b.map_status().contains("not following"));
         assert!(b.load_speech_path(&fixture()));
@@ -1208,18 +1214,27 @@ mod tests {
             SubsonicLogin::from_password("n", "p"),
         ));
         let dir = std::env::temp_dir().join("underscore-no-server-cache");
-        let err = Bridge::prepare_map_from_server("version = 1\n[[cue]]\nat = 0", server, &dir)
-            .unwrap_err();
+        let err =
+            Bridge::prepare_map_from_server("version = 1\n[[cue]]\nat = 0", server, &dir, &dir)
+                .unwrap_err();
         assert!(!err.contains("127.0.0.1"), "{err}");
     }
 
     #[test]
     fn prepare_map_reports_what_is_wrong() {
         let (music, cache) = music_folder("errors");
-        assert!(Bridge::prepare_map("version = 1\n[[cue]]\nat = 0", &music, &cache).is_err());
+        assert!(
+            Bridge::prepare_map(
+                "version = 1\n[[cue]]\nat = 0",
+                &music,
+                &cache,
+                &cache.join("scores")
+            )
+            .is_err()
+        );
         let empty = music.join("empty");
         std::fs::create_dir_all(&empty).unwrap();
-        let err = Bridge::prepare_map(MAP, &empty, &cache).unwrap_err();
+        let err = Bridge::prepare_map(MAP, &empty, &cache, &cache.join("scores")).unwrap_err();
         assert!(err.contains("no music found"), "{err}");
     }
 
@@ -1235,7 +1250,7 @@ mod tests {
         {
             let mut b = shared.lock().unwrap();
             assert!(b.load_speech_path(&fixture()));
-            let prepared = Bridge::prepare_map(MAP, &music, &cache).unwrap();
+            let prepared = Bridge::prepare_map(MAP, &music, &cache, &cache.join("scores")).unwrap();
             assert!(b.install_map(prepared));
             b.seek(Duration::from_secs(4));
         }
