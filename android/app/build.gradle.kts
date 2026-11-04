@@ -22,8 +22,8 @@ android {
         applicationId = "io.github.ronin11.underscore"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = 2
+        versionName = "0.1.1"
         ndk {
             // The Rust library is built for these by cargo-ndk in CI.
             abiFilters += listOf("arm64-v8a")
